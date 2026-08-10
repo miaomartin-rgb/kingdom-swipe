@@ -52,6 +52,7 @@
       <div class="title">王國遠征</div>
       <div class="sub">你是光輝王國最後的統帥。<br>帶著你的騎士穿越暗影之地，<br>擊倒盤據在盡頭的魔物。</div>
       <div class="sub" style="color:#ffd98a;margin-top:16px;">👉 按住畫面左右拖曳<br>挑選能讓兵力變多的那道門</div>
+      <div class="sub" style="margin-top:12px;">途中會遇到「城牆防守」：<br>對準敵人最多的那一排集中火力，<br>把王國要塞蓋起來。</div>
       <button class="btn" id="startBtn">出征</button>
       <div class="hint">支援手機觸控 ／ 鍵盤左右鍵</div>
     </div>
@@ -120,6 +121,35 @@ document.getElementById('mute').onclick = function(){
   muted=!muted; this.textContent = muted?'✕':'♪';
 };
 
+/* ========== 城牆防守（插曲）數值 ==========
+   全部集中在這裡，之後調平衡只動這一塊。
+   要塞進度 = 擊殺數 / 配額，配額只由關卡決定，不看兵力。
+   敵人血量用 army^0.75（次線性）→ 擊殺率 ∝ army^0.25，
+   兵越多打得越快、漏進來的越少，不會像王戰那樣把兵力優勢直接抵銷掉。 */
+const SIEGE = {
+  duration    : 18,     // 上限秒數，時間到就收場
+  quotaBase   : 26,     // 要塞進度 = 擊殺數 / 配額；配額只看關卡，不看兵力
+  quotaLv     : 3,
+  spawnRate   : 2.9,    // 每秒放幾個（固定值，不隨配額變）——
+                        // 若改成「配額/固定秒數」，高關會突然變成傾倒式難度
+  hpC         : 6.83,   // 單兵 hp = hpC * army0^hpExp * (1+hpLv*(lv-1))
+  hpExp       : 0.75,   //   次線性 → 兵越多殺得越快（擊殺率 ∝ army^0.25）
+  hpLv        : 0.10,
+  volley      : 0.14,   // 齊射間隔（秒）
+  dmgPerArmy  : 0.5,    // 每次齊射總傷害 = army * dmgPerArmy
+  columnHalf  : 1.9,    // 正前方這個寬度內才是主要火力範圍 → 走位有意義
+  strayMul    : 0.5,    // 欄外沒目標時，打最近的敵人只有這個效率
+  focusFoes   : 3,      // 每次齊射最多分給幾個敵人
+  tracerMax   : 40,
+  foeSpeed    : 7.2,
+  rangeZ      : 30,     // 射程：敵人得先逼近到這個距離才打得到 → 路上才有東西
+  leakCost    : 0.015,  // 每漏一個扣 army0 的 1.5%（上限可控，不會被秒）
+  spawnZ      : 46,
+  hordeZ      : 40,     // 遠處那道敵軍人牆，全程可見
+  lanes       : [-2.8, -0.95, 0.95, 2.8],
+  bonus       : 0.22    // 完成獎勵 = army * bonus
+};
+
 /* ========== 遊戲狀態 ========== */
 const G = {
   state:'menu',       // menu | play | result
@@ -129,6 +159,7 @@ const G = {
   speed:10,
   objs:[], length:100,
   combat:null, boss:null, bossFight:false,
+  siege:null,
   floats:[], parts:[],
   shake:0, flash:0, flashColor:'255,60,60',
   best:0, tick:0
@@ -160,6 +191,7 @@ function makeSquad(z, lv, i){
   const c = Math.round((10 + i*8) * (1 + 0.38*(lv-1)) * rnd(0.85,1.15));
   return {type:'squad', z, count:Math.max(6,c), dead:false, engaged:false, wob:Math.random()*6};
 }
+function makeSiege(z){ return {type:'siege', z, done:false}; }
 const BOSSES = ['暗影巨魔','腐骨龍','熔岩巨獸','虛空領主','冥王 · 賽拉斯'];
 function buildLevel(lv){
   const objs=[]; let z=22;
@@ -168,7 +200,8 @@ function buildLevel(lv){
     objs.push(makeGate(z, lv)); z += 15;
     if(i%2===1 || i===stages-1){ objs.push(makeSquad(z, lv, i)); z += 13; }
   }
-  z += 13;
+  // 城牆防守插曲：閘門跑完、王戰之前
+  z += 10; objs.push(makeSiege(z)); z += 16;
   const hp = Math.round(300 * Math.pow(lv,1.25));
   const boss = {type:'boss', z, hp, max:hp, base:hp, dps: 0.20 + lv*0.006,
     name: BOSSES[(lv-1)%BOSSES.length] + (lv>BOSSES.length?(' +'+Math.floor((lv-1)/BOSSES.length)):''),
@@ -189,7 +222,7 @@ function startLevel(lv, carry){
   G.x=0; G.targetX=0; G.z=0; camZ = -PLAYER_DZ;
   const L = buildLevel(lv);
   G.objs = L.objs; G.length = L.length;
-  G.combat=null; G.bossFight=false; G.floats=[]; G.parts=[];
+  G.combat=null; G.bossFight=false; G.siege=null; G.floats=[]; G.parts=[];
   G.shake=0; G.flash=0;
   G.state='play';
   document.getElementById('menu').classList.add('hidden');
@@ -233,6 +266,129 @@ function burst(x,z,n,color){
   for(let i=0;i<n;i++){
     G.parts.push({x:x+rnd(-1,1), z:z+rnd(-.8,.8), y:rnd(0.3,1.2),
       vx:rnd(-1.6,1.6), vy:rnd(2,5.2), vz:rnd(-1,1), t:0, life:rnd(.45,.9), color});
+  }
+}
+
+/* ========== 城牆防守（插曲） ========== */
+function startSiege(o){
+  o.done = false;
+  o.t = 0;
+  o.killed = 0; o.spawned = 0; o.leaked = 0;
+  o.dmgAcc = 0; o.volleyN = 0; o.volleyAcc = 0; o.spawnAcc = 0;
+  o.foes = []; o.tracers = [];
+  o.army0 = Math.max(1, G.army);
+  o.quota = SIEGE.quotaBase + SIEGE.quotaLv * (G.level - 1);
+  o.foeHp = Math.max(6, SIEGE.hpC * Math.pow(o.army0, SIEGE.hpExp) *
+                        (1 + SIEGE.hpLv * (G.level - 1)));
+  o.leak  = Math.max(1, o.army0 * SIEGE.leakCost);
+  G.siege = o;
+  addFloat('守住陣線！','#ffe9a8', 0, G.z + 3, 1.15);
+  beep(150,.35,'sawtooth',.07);
+}
+
+function siegeVolley(s, lineZ){
+  s.volleyN++;
+  if(!s.foes.length) return;
+  // 主火力只覆蓋正前方一欄；欄內沒目標就打最近的，但效率打折
+  const inRange = s.foes.filter(f => f.z - lineZ < SIEGE.rangeZ);
+  if(!inRange.length) return;
+  let pool = inRange.filter(f => Math.abs(f.x - G.x) < SIEGE.columnHalf);
+  let mul = 1;
+  if(!pool.length){ pool = inRange.slice(); mul = SIEGE.strayMul; }
+  pool.sort((a,b) => a.z - b.z);
+
+  let left = Math.max(1, G.army * SIEGE.dmgPerArmy * mul), now = 0;
+  for(let i=0; i<pool.length && i<SIEGE.focusFoes && left>0; i++){
+    const f = pool[i];
+    const hit = Math.min(f.hp, left);
+    f.hp -= hit; left -= hit; now += hit;
+    if(s.tracers.length < SIEGE.tracerMax){
+      s.tracers.push({x0: G.x + rnd(-1.4,1.4), z0: lineZ, x1: f.x, z1: f.z, t:0, life:.11});
+    }
+  }
+  s.dmgAcc += now;
+  for(let i=s.foes.length-1; i>=0; i--){
+    if(s.foes[i].hp <= 0){
+      const f = s.foes[i];
+      burst(f.x, f.z, 9, '#ffd05a');
+      s.foes.splice(i,1);
+      s.killed++;
+    }
+  }
+  // 每 4 次齊射跳一個大數字，抄影片那個節奏，不要每幀洗版
+  if(s.volleyN % 4 === 0 && s.dmgAcc >= 1){
+    const f = s.foes[0];
+    addFloat('-'+Math.round(s.dmgAcc), '#ff5a72',
+             f ? f.x : G.x, (f ? f.z : G.z + 18) + 0.8, 1.2);
+    s.dmgAcc = 0;
+  }
+  if(Math.random() < 0.45) beep(rnd(320,430), .04, 'square', .022);
+}
+
+function updateSiege(dt){
+  const s = G.siege;
+  s.t += dt;
+  const lineZ = G.z + 1.4;
+
+  // 配額內的敵人在 spawnWindow 秒內平均放完
+  if(s.spawned < s.quota){
+    s.spawnAcc += dt * SIEGE.spawnRate;
+    while(s.spawnAcc >= 1 && s.spawned < s.quota){
+      s.spawnAcc -= 1; s.spawned++;
+      s.foes.push({
+        x: SIEGE.lanes[ri(0, SIEGE.lanes.length - 1)] + rnd(-.35,.35),
+        z: G.z + SIEGE.spawnZ + rnd(-5, 5),
+        hp: s.foeHp * rnd(.85,1.15), ph: Math.random() * 6.28
+      });
+    }
+  }
+
+  s.volleyAcc += dt;
+  while(s.volleyAcc >= SIEGE.volley){ s.volleyAcc -= SIEGE.volley; siegeVolley(s, lineZ); }
+
+  // 敵人推進；衝到陣線且離你夠近才咬兵力，閃得開就只是跑過去
+  for(let i=s.foes.length-1; i>=0; i--){
+    const f = s.foes[i];
+    f.z -= SIEGE.foeSpeed * dt;
+    if(f.z <= lineZ){
+      // 衝進陣線一律付出代價。站位決定的是「先清哪一排」，不是能不能免傷 ——
+      // 否則外側車道會變成既打不到、也咬不到你，站著不動就是最佳解。
+      G.army -= s.leak;
+      s.leaked++;
+      burst(f.x, lineZ, 7, '#ff6b8a');
+      addFloat('-'+Math.round(s.leak), '#ff7d92', f.x, lineZ + 0.6, 0.9);
+      G.shake = Math.max(G.shake, 6);
+      beep(90,.09,'sawtooth',.05);
+      s.foes.splice(i,1);
+    }
+  }
+
+  for(let i=s.tracers.length-1; i>=0; i--){
+    const t = s.tracers[i]; t.t += dt;
+    if(t.t > t.life) s.tracers.splice(i,1);
+  }
+
+  if(G.army <= 0){ G.army = 0; return lose(); }
+  if(s.killed >= s.quota) endSiege(s);
+  else if(s.spawned >= s.quota && !s.foes.length) endSiege(s);
+  else if(s.t >= SIEGE.duration) endSiege(s);
+}
+
+function endSiege(s){
+  s.done = true; G.siege = null;
+  // 獎勵按完成度給，不設全有全無的門檻 —— 打得多就拿得多
+  const p = Math.min(1, s.killed / s.quota);
+  const bonus = Math.max(4, Math.round(G.army * SIEGE.bonus * p));
+  G.army += bonus;
+  if(p >= 1){
+    addFloat('要塞完成 +'+bonus, '#7dffc0', 0, G.z + 2.5, 1.25);
+    burst(0, G.z + 2, 44, '#ffd05a');
+    G.flash = .45; G.flashColor = '255,220,120'; G.shake = 10;
+    beep(560,.28,'triangle',.08); setTimeout(()=>beep(840,.34,'triangle',.08), 150);
+  }else{
+    addFloat('要塞 '+Math.floor(p*100)+'%  +'+bonus, '#ffd98a', 0, G.z + 2.5, 1.1);
+    burst(0, G.z + 2, 18, '#ffd05a');
+    beep(420,.22,'triangle',.07);
   }
 }
 
@@ -528,6 +684,54 @@ function drawBoss(b){
   ctx.beginPath(); ctx.ellipse(cxp+w*0.14, hy, w*0.075, w*0.05,0,0,6.283); ctx.fill();
 }
 
+/* ========== 王國要塞（進度物件化，取代進度條） ========== */
+function drawFortress(s){
+  const p  = Math.max(0, Math.min(1, s.killed / s.quota));
+  const fw = Math.min(W*0.44, 240), fh = fw*0.86;
+  const base = HZ - fh*0.02;          // 整座塔都在地平線之上，不會被路面蓋掉
+  // [x, 距底高度, 寬, 高]，皆為 fw/fh 的比例
+  const rects = [
+    [-0.50, 0.00, 1.00, 0.30],   // 城牆
+    [-0.56, 0.20, 0.24, 0.46],   // 左塔
+    [ 0.32, 0.20, 0.24, 0.46],   // 右塔
+    [-0.18, 0.24, 0.36, 0.76]    // 中央主堡
+  ];
+  const toPx = r => [CX + r[0]*fw, base - (r[1]+r[3])*fh, r[2]*fw, r[3]*fh];
+
+  // 未建成：青色線框（影片那個全息感）
+  ctx.save();
+  ctx.globalAlpha = 0.4;
+  ctx.strokeStyle = '#7de3ff'; ctx.lineWidth = 1.5;
+  ctx.setLineDash([4,4]);
+  for(const r of rects){ const q = toPx(r); ctx.strokeRect(q[0], q[1], q[2], q[3]); }
+  ctx.restore();
+
+  // 已建成：由下往上填實體
+  if(p > 0){
+    ctx.save();
+    ctx.beginPath(); ctx.rect(CX-fw*0.62, base - fh*p, fw*1.24, fh*p); ctx.clip();
+    const g = ctx.createLinearGradient(0, base-fh, 0, base);
+    g.addColorStop(0,'#ffe9a8'); g.addColorStop(0.55,'#c98f2e'); g.addColorStop(1,'#5d4416');
+    ctx.fillStyle = g;
+    for(const r of rects){ const q = toPx(r); ctx.fillRect(q[0], q[1], q[2], q[3]); }
+    ctx.fillStyle = '#ffe9a8';
+    for(const r of [rects[1], rects[2], rects[3]]){
+      const q = toPx(r);
+      for(let i=0;i<3;i++) ctx.fillRect(q[0]+i*(q[2]/3)+q[2]*0.05, q[1]-fh*0.032, q[2]*0.22, fh*0.032);
+    }
+    ctx.restore();
+    // 建造中的掃描線
+    ctx.save();
+    ctx.globalAlpha = 0.45 + 0.35*Math.sin(G.tick*7);
+    ctx.strokeStyle = '#7de3ff'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(CX-fw*0.56, base-fh*p); ctx.lineTo(CX+fw*0.56, base-fh*p);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+}
+
 /* ========== HUD ========== */
 function drawHUD(){
   const top = 10 + (document.getElementById('safeTop').offsetHeight||0);
@@ -561,6 +765,20 @@ function drawHUD(){
   ctx.font='700 12px system-ui'; ctx.fillStyle='rgba(255,255,255,.6)';
   ctx.fillText('兵力', CX, yy+fs*0.62);
 
+  // 城牆防守倒數
+  if(G.siege){
+    const s = G.siege;
+    const left = Math.max(0, SIEGE.duration - s.t);
+    const pct  = Math.floor(Math.min(1, s.killed / s.quota) * 100);
+    ctx.textAlign='center'; ctx.textBaseline='top';
+    ctx.font='900 15px system-ui,sans-serif';
+    ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,.75)';
+    const txt = '王國要塞 '+pct+'%   守住陣線 '+left.toFixed(1)+'s';
+    ctx.strokeText(txt, CX, top+30);
+    ctx.fillStyle = left<5 ? '#ff8a9a' : '#ffd98a';
+    ctx.fillText(txt, CX, top+30);
+  }
+
   // 王血條
   if(G.bossFight && G.boss && !G.boss.dead){
     const hw=W*0.72, hx=CX-hw/2, hy=top+34, hh=16;
@@ -583,11 +801,11 @@ function update(dt){
   G.tick += dt;
   if(G.state!=='play') return;
 
-  // 橫向移動（戰鬥時自動回到中路）
+  // 橫向移動（戰鬥時自動回到中路；城牆防守時保留操控，走位是玩法的一部分）
   if(G.combat || G.bossFight) G.targetX += (0 - G.targetX) * Math.min(1, dt*7);
   G.x += (G.targetX - G.x) * Math.min(1, dt*11);
 
-  const frozen = !!G.combat || G.bossFight;
+  const frozen = !!G.combat || G.bossFight || !!G.siege;
   if(!frozen){
     G.z += G.speed * dt;
   }
@@ -644,6 +862,14 @@ function update(dt){
     if(G.army<=0){ G.army=0; return lose(); }
   }
 
+  // 城牆防守
+  if(!G.siege && !G.combat && !G.bossFight){
+    for(const o of G.objs){
+      if(o.type==='siege' && !o.done && G.z >= o.z-3){ startSiege(o); break; }
+    }
+  }
+  if(G.siege){ updateSiege(dt); if(G.state!=='play') return; }
+
   // 王戰
   const b=G.boss;
   if(b && !b.dead && !G.combat && G.z >= b.z-6.2){
@@ -699,9 +925,18 @@ function render(){
     if(o.z < camZ+0.8 || o.z > camZ+80) continue;
     if(o.type==='squad' && o.dead) continue;
     if(o.type==='boss' && o.dead) continue;
+    if(o.type==='siege') continue;
+    // 防守期間先把王藏起來，否則牠會擋住整條路和要塞
+    if(o.type==='boss' && G.siege) continue;
     items.push(o);
   }
   items.push({type:'player', z:G.z});
+  if(G.siege){
+    // 遠處那道敵軍人牆全程在畫面上，壓迫感不中斷
+    items.push({type:'horde', z:G.z + SIEGE.hordeZ});
+    for(const f of G.siege.foes)    items.push({type:'sfoe',  z:f.z, f});
+    for(const t of G.siege.tracers) items.push({type:'trace', z:(t.z0+t.z1)*0.5, t});
+  }
   for(const p of G.parts) items.push({type:'part', z:p.z, p});
   for(const f of G.floats) items.push({type:'float', z:f.z, f});
   items.sort((a,b)=>b.z-a.z);
@@ -712,6 +947,25 @@ function render(){
     else if(it.type==='squad') drawSquad(it);
     else if(it.type==='boss') drawBoss(it);
     else if(it.type==='player') drawCrowd(G.x, G.z, Math.max(1,Math.floor(G.army)), PAL_ALLY, 1, 1);
+    else if(it.type==='horde') drawCrowd(0, it.z, 120, PAL_FOE, -1, 3.4);
+    else if(it.type==='sfoe'){
+      // 每個「單位」畫成一小簇，路上才有影片那種黑壓壓的量感（純視覺，不影響數值）
+      const f=it.f, s=scaleAt(f.z); if(!s) continue;
+      const ph = f.ph + G.tick*9;
+      drawUnit(px(f.x-0.62,s), py(0,s), s*0.90, PAL_FOE, ph+2.1, -1);
+      drawUnit(px(f.x+0.62,s), py(0,s), s*0.90, PAL_FOE, ph+4.2, -1);
+      drawUnit(px(f.x,     s), py(0,s), s,      PAL_FOE, ph,     -1);
+    }
+    else if(it.type==='trace'){
+      const t=it.t, s0=scaleAt(t.z0), s1=scaleAt(t.z1); if(!s0||!s1) continue;
+      ctx.globalAlpha = Math.max(0, 1 - t.t/t.life);
+      ctx.strokeStyle='#ffe9a8'; ctx.lineWidth=Math.max(1, s0*0.028);
+      ctx.beginPath();
+      ctx.moveTo(px(t.x0,s0), py(0.55,s0));
+      ctx.lineTo(px(t.x1,s1), py(0.55,s1));
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
     else if(it.type==='part'){
       const p=it.p, s=scaleAt(p.z); if(!s) continue;
       const a = 1 - p.t/p.life;
@@ -735,6 +989,8 @@ function render(){
       ctx.globalAlpha=1;
     }
   }
+  // 要塞畫在最後，確保不被王或敵人擋住（它整座都在地平線之上）
+  if(G.siege) drawFortress(G.siege);
   ctx.restore();
 
   // 閃光
