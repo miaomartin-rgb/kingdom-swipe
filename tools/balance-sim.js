@@ -3,27 +3,25 @@
  * balance-sim.js — 王國遠征 數值模擬器
  *
  * 忠實移植 index.html 的關卡生成與戰鬥結算邏輯，讓數值可以在沒有瀏覽器的情況下驗證。
- * docs/architecture-review.html 裡的每一張表都由這支腳本產生。
  *
- *   node tools/balance-sim.js
+ *   node tools/balance-sim.js [seed]
  *
- * 移植對應（如果 index.html 改了，這裡要跟著改）：
- *   makeOp        <- index.html:141
- *   makeGate      <- index.html:152
- *   makeSquad     <- index.html:159
- *   buildLevel    <- index.html:164
- *   startLevel    <- index.html:186   （過關繼承 carry*0.45）
- *   雜兵團結算     <- index.html:630
- *   王戰結算       <- index.html:648
+ * ⚠ 這裡的 BAL 必須跟 index.html 的 BAL 常數區塊逐項一致。改了那邊就要改這邊。
+ *
+ * 移植對應：
+ *   BAL / makeOp / makeGate / makeSquad  <- index.html 「經濟數值」與「關卡生成」
+ *   startLevel 的過關繼承                <- index.html startLevel()
+ *   雜兵團按比例損耗                      <- index.html update() 戰鬥結算
+ *   王戰                                 <- index.html update() 王戰
+ *
+ * 城牆防守（插曲）不在這裡模擬 —— 它牽涉走位，用 tools/siege-sweep.js
+ * 直接跑真的 index.html 量測。
  */
 'use strict';
 
 const DT = 1 / 60;
 
-/* ---------- 帶種子的 PRNG ----------
- * index.html 用的是 Math.random()，所以結果無法重現。這裡改用 mulberry32，
- * 讓報告裡的每個數字都能被重跑驗證 —— 這也正是 §4 建議遊戲本體要做的改動。
- */
+/* ---------- 帶種子的 PRNG（index.html 用 Math.random，這裡要可重現） ---------- */
 let _s = 0x9e3779b9;
 function seed(n) { _s = n >>> 0; }
 function random() {
@@ -33,164 +31,215 @@ function random() {
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
-
-/* ---------- 移植自 index.html 的生成邏輯 ---------- */
 const rnd = (a, b) => a + random() * (b - a);
-const ri  = (a, b) => Math.floor(rnd(a, b + 1));
 
-function makeOp(good, lv) {
-  if (good) {
-    return random() < 0.45
-      ? { op: 'x', val: random() < 0.8 ? 2 : 3 }
-      : { op: '+', val: ri(12, 18 + lv * 6) };
+/* ---------- 與 index.html 同步的常數 ---------- */
+const BAL = {
+  ref: lv => Math.round(40 * Math.pow(1.5, lv - 1)),
+  carryBonus: 0.25,
+  carryCapMul: 0.60,
+  bothGood: 0.78,
+  mulMax: lv => 1 + Math.floor((lv - 1) / 3),
+  mulVal: 2,
+  addLo: 0.40, addHi: 0.78,
+  pctLo: 18, pctHi: 35,
+  divChance: 0.35,
+  divVal: 2,
+  subLo: 0.25, subHi: 0.45,
+  squadLo: 0.09, squadHi: 0.16,
+  expectTable: [110, 278, 421, 1163, 1712, 2501, 5769, 9015],
+  expect: lv => lv <= BAL.expectTable.length
+            ? BAL.expectTable[lv-1]
+            : Math.round(BAL.expectTable[BAL.expectTable.length-1] *
+                         Math.pow(1.6, lv - BAL.expectTable.length)),
+  bossSecs   : 3.5,
+  bossDmgC: 0.8,
+  bossDmgExp: 0.85,
+};
+BAL.bossHp = lv => Math.round(BAL.bossDmgC * Math.pow(BAL.expect(lv), BAL.bossDmgExp) * BAL.bossSecs);
+
+/* ---------- 生成 ---------- */
+function addOp(lv) {
+  return { op: '+', val: Math.max(4, Math.round(BAL.ref(lv) * rnd(BAL.addLo, BAL.addHi))) };
+}
+function pctOp() { return { op: '%', val: Math.round(rnd(BAL.pctLo, BAL.pctHi)) }; }
+function badOp(lv) {
+  if (random() < BAL.divChance) return { op: '/', val: BAL.divVal };
+  return { op: '-', val: Math.max(3, Math.round(BAL.ref(lv) * rnd(BAL.subLo, BAL.subHi))) };
+}
+function makeGate(lv, budget) {
+  const canMul = budget.mul > 0;
+  const bothGood = random() < BAL.bothGood;
+  let a, b;
+  if (bothGood) {
+    if (canMul && random() < 0.45) { budget.mul--; a = { op: 'x', val: BAL.mulVal }; }
+    else a = pctOp();
+    b = addOp(lv);
+  } else {
+    if (canMul && random() < 0.35) { budget.mul--; a = { op: 'x', val: BAL.mulVal }; }
+    else a = addOp(lv);
+    b = badOp(lv);
   }
-  return random() < 0.45
-    ? { op: '/', val: 2 }
-    : { op: '-', val: ri(8, 12 + lv * 4) };
+  return { left: a, right: b, bothGood };
 }
-
-function makeGate(lv) {
-  const bothGood = random() >= 0.72;
-  return bothGood
-    ? { left: makeOp(true, lv), right: makeOp(true, lv), bothGood: true }
-    : { left: makeOp(true, lv), right: makeOp(false, lv), bothGood: false };
-}
-
 function applyOp(army, o) {
   if (o.op === '+') return army + o.val;
+  if (o.op === '%') return army + Math.floor(army * o.val / 100);
   if (o.op === '-') return army - o.val;
   if (o.op === 'x') return Math.floor(army * o.val);
   return Math.floor(army / o.val);
 }
-
-function squadCount(lv, i) {
-  return Math.max(6, Math.round((10 + i * 8) * (1 + 0.38 * (lv - 1)) * rnd(0.85, 1.15)));
+function squadFrac(i) {
+  return Math.min(0.42, rnd(BAL.squadLo, BAL.squadHi) * (0.85 + 0.10 * i));
 }
-
 const stagesFor = lv => 5 + Math.min(4, lv - 1);
-const bossBaseHp = lv => Math.round(300 * Math.pow(lv, 1.25));
 
 /* ---------- 結算 ---------- */
-
-/** 雜兵團：雙方扣掉「相同的絕對值」— 清場成本恆等於敵軍人數，與己方兵力無關。 */
-function resolveSquad(army, count) {
-  const start = count;
-  let t = 0;
-  while (count > 0 && army > 0 && t < 120) {
-    const rate = Math.min(Math.max(22, (army + count) * 0.85), start / 0.6);
-    const d = rate * DT;
-    army -= d; count -= d; t += DT;
-  }
-  return { army: Math.max(0, army), seconds: t };
+/** 雜兵團：直接扣掉當前兵力的一個比例，成本永遠存在。 */
+function resolveSquad(army, frac) {
+  return Math.max(0, army - army * frac);
 }
-
-/** 王戰：注意 b.max 被重設為 army*12 — 這條回授邊讓兵力優勢失效。 */
+/** 王戰：血量只由關卡決定；傷害對兵力次線性。 */
 function resolveBoss(army, lv) {
-  const max = Math.max(bossBaseHp(lv), Math.round(army * 12));
+  const max = BAL.bossHp(lv);
   const dps = 0.20 + lv * 0.006;
   let hp = max, t = 0;
   while (hp > 0 && army > 0 && t < 120) {
-    hp   -= army * 6 * DT;
+    hp -= Math.pow(Math.max(0, army), BAL.bossDmgExp) * BAL.bossDmgC * DT;
     army -= (army * dps + 2) * DT;
     t += DT;
   }
   return { win: hp <= 0, army: Math.max(0, army), seconds: t, bossHp: max };
 }
 
-/** 完美玩家跑完一關（每個閘門都選期望值較高的一側）。 */
-function runLevel(lv, army) {
+/**
+ * 跑完一關的閘門與雜兵團（不含城牆防守）。
+ * skill = 1 每道門都選最優；0 完全隨機；中間值代表偶爾選錯。
+ */
+function runLevel(lv, army, skill) {
+  if (skill === undefined) skill = 1;
   const stages = stagesFor(lv);
+  const budget = { mul: BAL.mulMax(lv) };
+  let drain = 0;
   for (let i = 0; i < stages; i++) {
-    const g = makeGate(lv);
-    army = Math.max(0, Math.max(applyOp(army, g.left), applyOp(army, g.right)));
+    const g = makeGate(lv, budget);
+    const ra = applyOp(army, g.left), rb = applyOp(army, g.right);
+    const pickBest = random() < skill;
+    army = Math.max(0, pickBest ? Math.max(ra, rb)
+                                : (random() < 0.5 ? ra : rb));
     if (i % 2 === 1 || i === stages - 1) {
-      army = resolveSquad(army, squadCount(lv, i)).army;
+      const before = army;
+      army = resolveSquad(army, squadFrac(i));
+      drain += before - army;
     }
-    if (army <= 0) return 0;
+    if (army <= 0) return { army: 0, drain };
   }
-  return army;
+  return { army, drain };
 }
 
 /* ---------- 報表 ---------- */
-const pad  = (s, n) => String(s).padStart(n);
-const fmt  = n => Math.round(n).toLocaleString('en-US');
+const pad = (s, n) => String(s).padStart(n);
+const fmt = n => Math.round(n).toLocaleString('en-US');
 const rule = n => console.log('─'.repeat(n));
 
-function reportBossIsArmyProof() {
-  console.log('\n【1】王戰：兵力多寡對結果幾乎沒有影響');
-  rule(76);
-  console.log('關卡  進場兵力      Boss HP    時長     結果   存活率');
-  rule(76);
-  for (const [lv, armies] of [[1, [30, 20000]], [5, [60, 120, 400, 2000, 20000]]]) {
+function reportBoss() {
+  console.log('\n【1】王戰：兵力現在真的有差嗎？');
+  rule(72);
+  console.log('關卡  進場兵力   Boss HP   時長     結果   存活率');
+  rule(72);
+  for (const [lv, armies] of [[1, [40, 80, 160, 400]], [5, [200, 400, 800, 2000]]]) {
     for (const a of armies) {
       const r = resolveBoss(a, lv);
-      console.log(
-        `${pad(lv, 3)}  ${pad(fmt(a), 10)}  ${pad(fmt(r.bossHp), 11)}  ` +
+      console.log(`${pad(lv, 3)}  ${pad(fmt(a), 9)}  ${pad(fmt(r.bossHp), 8)}  ` +
         `${pad(r.seconds.toFixed(2) + 's', 7)}  ${r.win ? ' 勝 ' : ' 敗 '}  ` +
         `${pad((r.army / a * 100).toFixed(1) + '%', 7)}`);
     }
   }
-  console.log('\n→ 第 5 關帶 400 人與帶 20,000 人：時長差 0.04 秒、存活率差 1.4 個百分點。');
 }
 
-function reportEconomyDiverges(runs = 300) {
-  console.log('\n【2】完美玩家的兵力曲線：指數收入 vs 線性成本');
-  rule(76);
-  console.log('關卡   抵達 Boss 兵力(中位)   雜兵團損耗佔比   相對渲染上限(130)');
-  rule(76);
+function reportCurve(runs = 300) {
+  console.log('\n【2】完美玩家的兵力曲線');
+  rule(78);
+  console.log('關卡   起始    抵達 Boss    雜兵團損耗   王戰結果');
+  rule(78);
   let prev = 0;
   for (let lv = 1; lv <= 8; lv++) {
-    const out = [];
+    const ends = [], drains = [];
+    let start = 0;
     for (let k = 0; k < runs; k++) {
-      // index.html:188 — 過關繼承 max(35, carry*0.45)
-      const start = lv === 1 ? 35 : Math.max(35, Math.round(prev * 0.45));
-      out.push(runLevel(lv, start));
+      start = BAL.ref(lv) + (prev
+        ? Math.min(Math.round(prev * BAL.carryBonus), Math.round(BAL.carryCapMul * BAL.ref(lv)))
+        : 0);
+      const r = runLevel(lv, start);
+      ends.push(r.army); drains.push(r.drain);
     }
-    out.sort((a, b) => a - b);
-    const med = out[Math.floor(runs / 2)];
+    ends.sort((a, b) => a - b); drains.sort((a, b) => a - b);
+    const med = ends[Math.floor(runs / 2)];
+    const drn = drains[Math.floor(runs / 2)];
     prev = med;
-
-    let squadTotal = 0;
-    const stages = stagesFor(lv);
-    for (let i = 0; i < stages; i++) {
-      if (i % 2 === 1 || i === stages - 1) squadTotal += Math.round((10 + i * 8) * (1 + 0.38 * (lv - 1)));
-    }
-    console.log(
-      `${pad(lv, 3)}   ${pad(fmt(med), 18)}   ${pad((squadTotal / med * 100).toFixed(3) + '%', 13)}   ` +
-      `${pad(fmt(med / 130) + 'x', 16)}`);
+    const boss = resolveBoss(med, lv);
+    console.log(`${pad(lv, 3)}   ${pad(fmt(start), 6)}  ${pad(fmt(med), 10)}   ` +
+      `${pad(fmt(drn) + ' (' + (drn / (med + drn) * 100).toFixed(0) + '%)', 12)}   ` +
+      `${boss.win ? '勝 ' + boss.seconds.toFixed(1) + 's 剩 ' + fmt(boss.army)
+                  : '敗 (HP ' + fmt(boss.bossHp) + ')'}`);
   }
-  console.log('\n→ 第 6 關起，遊戲裡所有威脅加總不到兵力的萬分之一。');
 }
 
-function reportGateChoicesAreFake(samples = 20000) {
+function reportGates(samples = 20000) {
   console.log('\n【3】閘門：有多少比例真的在問玩家問題？');
-  rule(76);
+  rule(78);
   let obvious = 0, wide = 0, close = 0;
   for (let k = 0; k < samples; k++) {
     const lv = 1 + Math.floor(random() * 5);
-    const g = makeGate(lv);
+    // 用該關中段的典型兵力來評估，而不是 ref 本身
+    const army = Math.round(BAL.ref(lv) * 3);
+    const g = makeGate(lv, { mul: 1 });
     if (!g.bothGood) { obvious++; continue; }
-    const army = 200;
     const a = applyOp(army, g.left), b = applyOp(army, g.right);
-    if (Math.abs(a - b) < 0.1 * Math.max(a, b)) close++; else wide++;
+    if (Math.abs(a - b) < 0.15 * Math.max(a, b)) close++; else wide++;
   }
   const pct = n => (n / samples * 100).toFixed(1) + '%';
   console.log(`一好一壞（顏色即答案，零計算）    ${pad(pct(obvious), 8)}`);
-  console.log(`兩個都好，差距 > 10%（掃一眼）    ${pad(pct(wide), 8)}`);
-  console.log(`兩個都好，差距 < 10%（真兩難）    ${pad(pct(close), 8)}`);
-  console.log(`\n→ 核心互動只有 ${pct(close)} 構成實質決策，其餘 ${pct(obvious + wide)} 不需要思考。`);
+  console.log(`兩個都好，差距 > 15%（掃一眼）    ${pad(pct(wide), 8)}`);
+  console.log(`兩個都好，差距 < 15%（真兩難）    ${pad(pct(close), 8)}`);
+  console.log(`\n→ 實質決策（兩邊都好）共 ${pct(wide + close)}，其中 ${pct(close)} 勢均力敵。`);
+}
+
+function reportSkill(runs = 400) {
+  console.log('\n【4】玩得好 vs 玩得爛：結局會不一樣嗎？');
+  rule(78);
+  console.log('關卡   每門都選對    八成選對     隨機亂選     (中位兵力 / 過關率)');
+  rule(78);
+  const prev = { 1: 0, 0.8: 0, 0.5: 0 };
+  for (let lv = 1; lv <= 6; lv++) {
+    const cells = [];
+    for (const skill of [1, 0.8, 0.5]) {
+      const ends = []; let wins = 0;
+      for (let k = 0; k < runs; k++) {
+        const start = BAL.ref(lv) + (prev[skill]
+          ? Math.min(Math.round(prev[skill] * BAL.carryBonus), Math.round(BAL.carryCapMul * BAL.ref(lv)))
+          : 0);
+        const r = runLevel(lv, start, skill);
+        ends.push(r.army);
+        if (r.army > 0 && resolveBoss(r.army, lv).win) wins++;
+      }
+      ends.sort((a, b) => a - b);
+      const med = ends[Math.floor(runs / 2)];
+      prev[skill] = med;
+      cells.push(pad(fmt(med) + ' / ' + Math.round(wins / runs * 100) + '%', 12));
+    }
+    console.log(`${pad(lv, 3)}   ${cells.join('  ')}`);
+  }
 }
 
 if (require.main === module) {
   const SEED = Number(process.argv[2]) || 20260810;
-  console.log(`王國遠征 · 數值模擬（移植自 index.html @ 1119df9 · seed=${SEED}）`);
-  seed(SEED); reportBossIsArmyProof();
-  seed(SEED); reportEconomyDiverges();
-  seed(SEED); reportGateChoicesAreFake();
+  console.log(`王國遠征 · 數值模擬（seed=${SEED}）`);
+  seed(SEED); reportBoss();
+  seed(SEED); reportCurve();
+  seed(SEED); reportGates();
+  seed(SEED); reportSkill();
   console.log('');
 }
 
-module.exports = {
-  seed, random, makeOp, makeGate, applyOp,
-  resolveSquad, resolveBoss, runLevel, bossBaseHp, stagesFor,
-};
+module.exports = { BAL, seed, random, addOp, badOp, makeGate, applyOp, resolveSquad, resolveBoss, runLevel, stagesFor };

@@ -117,8 +117,17 @@ function beep(freq,dur,type,vol){
     o.start(); o.stop(actx.currentTime+dur);
   }catch(e){}
 }
+// context 一旦被瀏覽器暫停（切分頁、iOS 回前景）就再也不會自己恢復，必須手動 resume
+function resumeAudio(){
+  try{
+    if(!actx) actx = new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state === 'suspended') actx.resume();
+  }catch(e){}
+}
 document.getElementById('mute').onclick = function(){
   muted=!muted; this.textContent = muted?'✕':'♪';
+  if(!muted) resumeAudio();
+  saveGame({muted:muted});
 };
 
 /* ========== 城牆防守（插曲）數值 ==========
@@ -165,44 +174,121 @@ const G = {
   best:0, tick:0
 };
 
+/* ========== 經濟數值 ==========
+   全部集中在這裡。tools/balance-sim.js 必須跟這一塊保持同步。
+
+   三個刻意的設計決定：
+   1. 每關有一條「參考兵力」ref(lv)，加法閘門與雜兵團強度都依它縮放。
+      這樣數字不會被兵力本身放大，成長是多項式而不是指數。
+   2. 加法值刻意設在 ref 附近 → 「×2 還是 +N」的交叉點就落在玩家實際
+      的兵力區間內，答案會隨當下數字翻面，選門才是真的選擇。
+   3. 雜兵團改成按比例損耗，成本永遠存在，不會被兵力成長稀釋成零。   */
+const BAL = {
+  ref        : lv => Math.round(40 * Math.pow(1.5, lv-1)), // 每關參考兵力
+  // 每關從 ref 重新開始，上一關的殘兵只換成有上限的獎勵。
+  // 若讓兵力整條繼承，指數成長會跨關累積，四關後數字就失控。
+  carryBonus : 0.25,
+  carryCapMul: 0.60,     // 獎勵上限 = carryCapMul * ref(lv)
+  bothGood   : 0.78,     // 兩邊都是好處的機率（其餘保留一個明顯的壞門）
+  mulMax     : lv => 1 + Math.floor((lv-1)/3),  // 每關最多幾道乘法門
+                         // 乘法必然造成指數成長，唯一的控制手段就是限制次數
+  mulVal     : 2,
+  addLo      : 0.40, addHi: 0.78,   // 加法值 = ref * [lo,hi]
+  pctLo      : 18,   pctHi : 35,    // 百分比門 +P%。乘法用完後改用它配對加法門：
+                                    // 交叉點 = N/(P/100) 剛好落在該關兵力區間內，
+                                    // 而且成長遠比 ×2 溫和，不會失控
+  divChance  : 0.35,     // 壞門是除法的機率
+  divVal     : 2,
+  subLo      : 0.25, subHi: 0.45,   // 減法值 = ref * [lo,hi]
+  squadLo    : 0.09, squadHi: 0.16, // 雜兵團扣掉當前兵力的這個比例（真的按比例）
+  // 設計上抵達王前的兵力。這串數字是 tools/balance-sim.js 量出來的中位曲線
+  // 取 75%（介於「每門都選對」與「隨機亂選」之間），第 9 關起以 1.6 倍外推。
+  // 王的血量對齊這條曲線 —— 關卡決定難度，玩家的累積決定他打得多輕鬆。
+  expectTable: [110, 278, 421, 1163, 1712, 2501, 5769, 9015],
+  expect     : lv => lv <= BAL.expectTable.length
+                 ? BAL.expectTable[lv-1]
+                 : Math.round(BAL.expectTable[BAL.expectTable.length-1] *
+                              Math.pow(1.6, lv - BAL.expectTable.length)),
+  bossSecs   : 3.5,      // 期望兵力下的王戰時長
+  bossDmgC   : 0.8,      // 王戰 DPS = army^bossDmgExp * bossDmgC
+  bossDmgExp : 0.85,     // 次線性：多帶有用，但邊際遞減
+  // 血量對齊「設計上的期望兵力」，而不是玩家當下的兵力 ——
+  // 這是關鍵差別：關卡決定難度，玩家的累積決定他打得多輕鬆。
+  bossHp     : lv => Math.round(BAL.bossDmgC *
+                       Math.pow(BAL.expect(lv), BAL.bossDmgExp) * BAL.bossSecs)
+};
+
+/* ========== 數字顯示 ========== */
+// 兵力會長到四、五位數，原本直接印整數會撐爆 HUD
+function fmtNum(n){
+  n = Math.floor(n);
+  if(n < 10000) return String(n);
+  if(n < 100000000) return (n/10000).toFixed(n < 100000 ? 1 : 0) + '萬';
+  return (n/100000000).toFixed(1) + '億';
+}
+
+/* ========== 存檔 ========== */
+const SAVE_KEY = 'kingdom.v1';
+const SAVE_DEFAULTS = { best:0, maxLevel:1, muted:false, runs:0 };
+function loadSave(){
+  try{ return Object.assign({}, SAVE_DEFAULTS, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); }
+  catch(e){ return Object.assign({}, SAVE_DEFAULTS); }   // 無痕模式／配額滿時安靜退回預設
+}
+function saveGame(patch){
+  const next = Object.assign(loadSave(), patch);
+  try{ localStorage.setItem(SAVE_KEY, JSON.stringify(next)); }catch(e){}
+  return next;
+}
+
 /* ========== 關卡生成 ========== */
 function rnd(a,b){ return a + Math.random()*(b-a); }
 function ri(a,b){ return Math.floor(rnd(a,b+1)); }
 
-function makeOp(good, lv){
-  if(good){
-    const r=Math.random();
-    if(r<0.45) return {op:'x', val: Math.random()<0.8?2:3};
-    return {op:'+', val: ri(12,18+lv*6)};
-  }else{
-    const r=Math.random();
-    if(r<0.45) return {op:'/', val:2};
-    return {op:'-', val: ri(8,12+lv*4)};
-  }
+function addOp(lv){
+  return {op:'+', val: Math.max(4, Math.round(BAL.ref(lv) * rnd(BAL.addLo, BAL.addHi)))};
 }
-function makeGate(z, lv){
+function pctOp(){ return {op:'%', val: Math.round(rnd(BAL.pctLo, BAL.pctHi))}; }
+function badOp(lv){
+  if(Math.random() < BAL.divChance) return {op:'/', val: BAL.divVal};
+  return {op:'-', val: Math.max(3, Math.round(BAL.ref(lv) * rnd(BAL.subLo, BAL.subHi)))};
+}
+// budget 追蹤這一關還剩幾道乘法門可以發
+function makeGate(z, lv, budget){
+  const canMul = budget.mul > 0;
   let a,b;
-  if(Math.random()<0.72){ a=makeOp(true,lv); b=makeOp(false,lv); }
-  else { a=makeOp(true,lv); b=makeOp(true,lv); }
+  if(Math.random() < BAL.bothGood){
+    // 兩邊都是好處。乘法門一定配一個加法門，讓「×2 還是 +N」成為真的比較
+    // 一定是「比例 vs 定量」的配對，答案取決於當下兵力；
+    // 絕不生成 +19 vs +19 這種兩邊同型的假選擇
+    if(canMul && Math.random() < 0.45){ budget.mul--; a = {op:'x', val: BAL.mulVal}; }
+    else a = pctOp();
+    b = addOp(lv);
+  }else{
+    if(canMul && Math.random() < 0.35){ budget.mul--; a = {op:'x', val: BAL.mulVal}; }
+    else a = addOp(lv);
+    b = badOp(lv);
+  }
   if(Math.random()<0.5){ const t=a;a=b;b=t; }
   return {type:'gate', z, left:a, right:b, used:false, hit:0};
 }
 function makeSquad(z, lv, i){
-  const c = Math.round((10 + i*8) * (1 + 0.38*(lv-1)) * rnd(0.85,1.15));
-  return {type:'squad', z, count:Math.max(6,c), dead:false, engaged:false, wob:Math.random()*6};
+  // frac 是「會扣掉當前兵力的比例」。用比例而非絕對值，成本才不會被兵力成長稀釋。
+  const frac = Math.min(0.42, rnd(BAL.squadLo, BAL.squadHi) * (0.85 + 0.10*i));
+  return {type:'squad', z, frac, count:0, dead:false, engaged:false, wob:Math.random()*6};
 }
 function makeSiege(z){ return {type:'siege', z, done:false}; }
 const BOSSES = ['暗影巨魔','腐骨龍','熔岩巨獸','虛空領主','冥王 · 賽拉斯'];
 function buildLevel(lv){
   const objs=[]; let z=22;
   const stages = 5 + Math.min(4, lv-1);
+  const budget = { mul: BAL.mulMax(lv) };
   for(let i=0;i<stages;i++){
-    objs.push(makeGate(z, lv)); z += 15;
+    objs.push(makeGate(z, lv, budget)); z += 15;
     if(i%2===1 || i===stages-1){ objs.push(makeSquad(z, lv, i)); z += 13; }
   }
   // 城牆防守插曲：閘門跑完、王戰之前
   z += 10; objs.push(makeSiege(z)); z += 16;
-  const hp = Math.round(300 * Math.pow(lv,1.25));
+  const hp = BAL.bossHp(lv);
   const boss = {type:'boss', z, hp, max:hp, base:hp, dps: 0.20 + lv*0.006,
     name: BOSSES[(lv-1)%BOSSES.length] + (lv>BOSSES.length?(' +'+Math.floor((lv-1)/BOSSES.length)):''),
     swing:0, dead:false};
@@ -218,7 +304,10 @@ function buildLevel(lv){
 
 function startLevel(lv, carry){
   G.level = lv;
-  G.army = carry ? Math.max(35, Math.round(carry*0.45)) : 35;
+  // 每關從 ref 重新開始，殘兵只換成有上限的獎勵
+  G.army = BAL.ref(lv) + (carry
+    ? Math.min(Math.round(carry * BAL.carryBonus), Math.round(BAL.carryCapMul * BAL.ref(lv)))
+    : 0);
   G.x=0; G.targetX=0; G.z=0; camZ = -PLAYER_DZ;
   const L = buildLevel(lv);
   G.objs = L.objs; G.length = L.length;
@@ -242,7 +331,7 @@ cv.addEventListener('pointerdown', e=>{
   if(G.state!=='play') return;
   dragging=true; dragStartScreen = screenToRoad(e.clientX); dragStartX = G.targetX;
   cv.setPointerCapture && cv.setPointerCapture(e.pointerId);
-  if(!actx){ try{ actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(err){} }
+  resumeAudio();
 });
 cv.addEventListener('pointermove', e=>{
   if(!dragging || G.state!=='play') return;
@@ -558,10 +647,11 @@ function drawGround(){
 function opLabel(o){
   if(o.op==='x') return '×'+o.val;
   if(o.op==='/') return '÷'+o.val;
+  if(o.op==='%') return '+'+o.val+'%';
   if(o.op==='+') return '+'+o.val;
   return '−'+o.val;
 }
-function opGood(o){ return o.op==='x'||o.op==='+'; }
+function opGood(o){ return o.op==='x'||o.op==='+'||o.op==='%'; }
 
 function drawGate(g){
   const s = scaleAt(g.z); if(!s) return;
@@ -616,7 +706,8 @@ function drawDeco(d){
 
 function drawSquad(q){
   if(q.dead) return;
-  const n = Math.max(1, Math.ceil(q.count));
+  // 還沒接戰的敵軍，人數依當前兵力即時估算，玩家看到的數字才等於真的會付的代價
+  const n = Math.max(1, Math.ceil(q.engaged ? q.count : G.army * q.frac));
   drawCrowd(0, q.z, n, PAL_FOE, -1, 1);
   const s = scaleAt(q.z); if(!s) return;
   const fs = Math.max(12, s*0.5);
@@ -624,8 +715,8 @@ function drawSquad(q){
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   const ty = py(2.4 + crowdRadiusMul(n)*0.2, s);
   ctx.lineWidth=Math.max(2,fs*0.18); ctx.strokeStyle='rgba(0,0,0,.7)';
-  ctx.strokeText(n, px(0,s), ty);
-  ctx.fillStyle='#ff8a9a'; ctx.fillText(n, px(0,s), ty);
+  ctx.strokeText(fmtNum(n), px(0,s), ty);
+  ctx.fillStyle='#ff8a9a'; ctx.fillText(fmtNum(n), px(0,s), ty);
 }
 
 function drawBoss(b){
@@ -757,11 +848,12 @@ function drawHUD(){
   const fs = Math.min(52, W*0.13);
   ctx.font='900 '+fs+'px system-ui,sans-serif';
   const yy = H*0.845;
+  const txt = fmtNum(n);
   ctx.lineWidth=fs*0.16; ctx.strokeStyle='rgba(0,0,0,.75)';
-  ctx.strokeText(n, CX, yy);
+  ctx.strokeText(txt, CX, yy);
   const tg = ctx.createLinearGradient(0,yy-fs/2,0,yy+fs/2);
   tg.addColorStop(0,'#fff6cf'); tg.addColorStop(1,'#ffc94d');
-  ctx.fillStyle=tg; ctx.fillText(n, CX, yy);
+  ctx.fillStyle=tg; ctx.fillText(txt, CX, yy);
   ctx.font='700 12px system-ui'; ctx.fillStyle='rgba(255,255,255,.6)';
   ctx.fillText('兵力', CX, yy+fs*0.62);
 
@@ -791,7 +883,7 @@ function drawHUD(){
     roundRect(hx,hy,hw,hh,8); ctx.stroke();
     ctx.font='800 12px system-ui'; ctx.fillStyle='#fff'; ctx.textAlign='center';
     ctx.textBaseline='middle';
-    ctx.fillText(G.boss.name+'  '+Math.ceil(G.boss.hp), CX, hy+hh/2);
+    ctx.fillText(G.boss.name+'  '+fmtNum(Math.ceil(G.boss.hp)), CX, hy+hh/2);
   }
 }
 
@@ -818,13 +910,14 @@ function update(dt){
       const op = G.x < 0 ? o.left : o.right;
       const before = G.army;
       if(op.op==='+') G.army += op.val;
+      else if(op.op==='%') G.army += Math.floor(G.army * op.val / 100);
       else if(op.op==='-') G.army -= op.val;
       else if(op.op==='x') G.army = Math.floor(G.army*op.val);
       else if(op.op==='/') G.army = Math.floor(G.army/op.val);
       G.army = Math.max(0, G.army);
       const diff = G.army - before;
       const good = diff>=0;
-      addFloat((good?'+':'')+diff, good?'#7dffc0':'#ff7d92', G.x, G.z+1.2, 1.25);
+      addFloat((good?'+':'-')+fmtNum(Math.abs(diff)), good?'#7dffc0':'#ff7d92', G.x, G.z+1.2, 1.25);
       burst(G.x, G.z, good?14:10, good?'#7dffc0':'#ff6b8a');
       beep(good?660:180, .12, good?'triangle':'sawtooth', .06);
       G.flash = good?0.18:0.3; G.flashColor = good?'120,255,190':'255,60,80';
@@ -836,7 +929,10 @@ function update(dt){
   if(!G.combat && !G.bossFight){
     for(const o of G.objs){
       if(o.type==='squad' && !o.dead && G.z >= o.z-2.2){
-        G.combat = o; o.engaged=true; o.start=o.count;
+        // 敵軍人數在遭遇的當下才決定，讓畫面上的數字與實際損耗一致
+        G.combat = o; o.engaged=true;
+        o.start = Math.max(4, Math.round(G.army * o.frac));
+        o.count = o.start;
         addFloat('衝鋒！','#ffe9a8', 0, o.z-1.2, 0.95);
         beep(120,.2,'sawtooth',.07);
         break;
@@ -844,16 +940,22 @@ function update(dt){
     }
   }
 
-  // 戰鬥結算
+  // 戰鬥結算：按比例損耗。帶得多存活比例高，但代價永遠存在，
+  // 不會像原本的「雙方扣相同絕對值」那樣被兵力成長稀釋成零。
   if(G.combat){
     const q=G.combat;
-    const rate = Math.min(Math.max(22, (G.army+q.count)*0.85), q.start/0.6);
-    const d = rate*dt;
-    G.army -= d; q.count -= d;
+    if(q.toll === undefined){
+      q.toll = G.army * q.frac;      // 這場要付出的兵力 = 當前兵力 × 比例
+      q.paid = 0;
+      q.dur  = Math.max(0.5, Math.min(1.5, q.frac * 7));
+    }
+    const d = Math.min(q.toll - q.paid, q.toll / q.dur * dt);
+    G.army -= d; q.paid += d;
+    q.count = Math.max(0, q.start * (1 - q.paid/q.toll));
     G.shake = 4;
     if(Math.random()<dt*26) burst(rnd(-1.2,1.2), q.z-0.9, 3, '#ffd05a');
     if(Math.random()<dt*9) beep(rnd(90,160),.05,'square',.03);
-    if(q.count<=0){
+    if(q.paid >= q.toll - 1e-6){
       q.count=0; q.dead=true; G.combat=null;
       addFloat('突破！','#ffd98a', 0, q.z, 1.1);
       burst(0,q.z,26,'#ffd05a');
@@ -875,14 +977,15 @@ function update(dt){
   if(b && !b.dead && !G.combat && G.z >= b.z-6.2){
     if(!G.bossFight){
       G.bossFight=true;
-      b.max = Math.max(b.base, Math.round(G.army*12));
+      // 血量只由關卡決定。原本會被重設成 army*12，等於宣告前面所有選門無效。
+      b.max = b.base;
       b.hp = b.max;
       beep(70,.5,'sawtooth',.08);
     }
   }
   if(G.bossFight && b && !b.dead){
     b.swing += dt;
-    b.hp -= G.army * 6 * dt;
+    b.hp -= Math.pow(Math.max(0,G.army), BAL.bossDmgExp) * BAL.bossDmgC * dt;
     G.army -= (G.army * b.dps + 2) * dt;
     G.shake = 3.5;
     if(Math.random()<dt*20) burst(rnd(-2,2), b.z-1.6, 2, '#ff9d4d');
@@ -1027,9 +1130,11 @@ function showResult(title, desc, stat, nextLabel){
 function win(){
   const n=Math.floor(G.army);
   G.best=Math.max(G.best,n);
+  G.state='result';          // 立刻凍結推進，否則這 700ms 內隊伍會跑出關卡尾端
+  saveGame({ best:G.best, maxLevel:Math.max(loadSave().maxLevel, G.level+1), runs:loadSave().runs+1 });
   setTimeout(()=>{
     showResult('⚔️ 王國得勝','你擊倒了 <b>'+G.boss.name+'</b><br>暗影之地又退了一步。',
-      '殘存兵力：'+n+' ／ 最高紀錄：'+G.best, '前往第 '+(G.level+1)+' 關');
+      '殘存兵力：'+fmtNum(n)+' ／ 最高紀錄：'+fmtNum(G.best), '前往第 '+(G.level+1)+' 關');
     pendingNext = ()=> startLevel(G.level+1, n);
   }, 700);
 }
@@ -1037,9 +1142,10 @@ function lose(){
   G.state='result';
   G.army=0;
   burst(G.x,G.z,30,'#ff6b8a'); G.shake=12;
+  saveGame({ best:G.best, runs:loadSave().runs+1 });
   setTimeout(()=>{
-    showResult('💀 全軍覆沒','你的騎士倒在了第 '+G.level+' 關。<br>下次記得挑 <b style="color:#7dffc0">綠色的門</b>。',
-      '最高紀錄：'+G.best+' 兵力', '再挑戰一次');
+    showResult('💀 全軍覆沒','你的騎士倒在了第 '+G.level+' 關。<br>下次記得比較一下兩道門的數字。',
+      '最高紀錄：'+fmtNum(G.best)+' 兵力', '再挑戰一次');
     pendingNext = ()=> startLevel(G.level, 0);
   }, 500);
 }
@@ -1047,11 +1153,22 @@ let pendingNext=null;
 document.getElementById('nextBtn').onclick = ()=>{ if(pendingNext) pendingNext(); };
 document.getElementById('retryBtn').onclick = ()=>{ G.best=Math.max(G.best,Math.floor(G.army)); startLevel(1,0); };
 document.getElementById('startBtn').onclick = ()=>{
-  if(!actx){ try{ actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} }
-  startLevel(1,0);
+  resumeAudio();
+  startLevel(startAtLevel, 0);
 };
 
 /* ========== 啟動 ========== */
+const saved = loadSave();
+G.best = saved.best;
+muted  = saved.muted;
+document.getElementById('mute').textContent = muted ? '✕' : '♪';
+// 上次打到第幾關就從那裡開始，回訪的人不用從頭重來
+const startAtLevel = Math.max(1, saved.maxLevel|0);
+if(saved.best > 0){
+  document.getElementById('startBtn').textContent = '繼續遠征 · 第 '+startAtLevel+' 關';
+  document.querySelector('#menu .hint').textContent =
+    '最高紀錄 '+fmtNum(saved.best)+' 兵力 ／ 支援觸控與鍵盤';
+}
 resize();
 requestAnimationFrame(loop);
 window.__game = G; // 測試用
