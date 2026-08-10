@@ -1,0 +1,1144 @@
+<title>王國遠征 · 架構檢視與市場升級建議</title>
+<style>
+/* ---------- tokens: light ---------- */
+:root{
+  --ground:#f4f2f7; --surface:#ffffff; --sunk:#eae6f1;
+  --ink:#241d33; --ink-2:#574d6e; --ink-3:#8a80a3;
+  --rule:#ded8e8; --rule-strong:#c6bcd8;
+  --accent:#8f5c0c; --accent-lit:#c78a1c; --accent-wash:#f6edda;
+  --good:#146b50; --good-wash:#e2f1eb;
+  --bad:#a92439;  --bad-wash:#f8e6e9;
+  --warn:#8a5a0d; --warn-wash:#f7eeda;
+  --code-bg:#efecf4;
+  --shadow:0 1px 2px rgba(36,29,51,.06);
+}
+/* ---------- tokens: dark (system default, un-stamped) ---------- */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#100c1a; --surface:#181227; --sunk:#0b0813;
+    --ink:#ece7f7; --ink-2:#a79ec2; --ink-3:#776d93;
+    --rule:#2c2342; --rule-strong:#413357;
+    --accent:#f0b342; --accent-lit:#ffe9a8; --accent-wash:#2a2013;
+    --good:#57d6a0; --good-wash:#12291f;
+    --bad:#ff7d92;  --bad-wash:#2c141b;
+    --warn:#f0b342; --warn-wash:#2a2013;
+    --code-bg:#100b1c;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+  }
+}
+/* ---------- tokens: dark (explicit) ---------- */
+:root[data-theme="dark"]{
+  --ground:#100c1a; --surface:#181227; --sunk:#0b0813;
+  --ink:#ece7f7; --ink-2:#a79ec2; --ink-3:#776d93;
+  --rule:#2c2342; --rule-strong:#413357;
+  --accent:#f0b342; --accent-lit:#ffe9a8; --accent-wash:#2a2013;
+  --good:#57d6a0; --good-wash:#12291f;
+  --bad:#ff7d92;  --bad-wash:#2c141b;
+  --warn:#f0b342; --warn-wash:#2a2013;
+  --code-bg:#100b1c;
+  --shadow:0 1px 2px rgba(0,0,0,.4);
+}
+
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:"PingFang TC","Noto Sans TC","Hiragino Sans TC","Microsoft JhengHei",
+              -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  font-size:17px; line-height:1.85; letter-spacing:.01em;
+  font-feature-settings:"palt" 1;
+}
+code,kbd,.mono,.num{
+  font-family:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  font-variant-numeric:tabular-nums;
+}
+
+/* ---------- layout ---------- */
+.page{max-width:1120px;margin:0 auto;padding:0 24px 120px;}
+.col{max-width:46rem;}
+section{padding-block:14px;}
+p{margin:0 0 1.1em;}
+p:last-child{margin-bottom:0;}
+.stack{display:flex;flex-direction:column;gap:1.1em;}
+.stack-lg{display:flex;flex-direction:column;gap:2.2em;}
+
+/* ---------- masthead ---------- */
+.masthead{padding:72px 0 40px;border-bottom:2px solid var(--ink);}
+.eyebrow{
+  font-size:12px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--accent);font-weight:700;margin-bottom:20px;
+}
+h1{
+  font-size:clamp(34px,6.2vw,58px);line-height:1.16;margin:0;font-weight:900;
+  letter-spacing:.02em;text-wrap:balance;
+}
+h1 .thin{font-weight:300;color:var(--ink-3);}
+.deck{
+  margin-top:22px;max-width:44rem;font-size:clamp(17px,2.2vw,20px);
+  line-height:1.75;color:var(--ink-2);text-wrap:pretty;
+}
+.byline{
+  margin-top:32px;display:flex;flex-wrap:wrap;gap:8px 28px;
+  font-size:12.5px;color:var(--ink-3);letter-spacing:.06em;
+}
+.byline b{color:var(--ink-2);font-weight:600;}
+
+/* ---------- verdict ---------- */
+.verdict{
+  margin-top:44px;display:grid;gap:1px;background:var(--rule);
+  border:1px solid var(--rule);
+  grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+}
+.verdict > div{background:var(--surface);padding:24px 22px;}
+.verdict h3{
+  margin:0 0 10px;font-size:12px;letter-spacing:.18em;text-transform:uppercase;
+  font-weight:700;color:var(--ink-3);
+}
+.verdict p{font-size:15.5px;line-height:1.7;color:var(--ink-2);margin:0;}
+.verdict strong{color:var(--ink);font-weight:700;}
+.v-keep h3{color:var(--good);}
+.v-fix  h3{color:var(--bad);}
+.v-move h3{color:var(--accent);}
+
+/* ---------- section heads ---------- */
+h2{
+  font-size:clamp(24px,3.4vw,32px);font-weight:900;letter-spacing:.03em;
+  margin:76px 0 6px;padding-top:26px;border-top:1px solid var(--rule-strong);
+  text-wrap:balance;
+}
+h2 .sn{
+  display:block;font-size:12px;letter-spacing:.2em;color:var(--accent);
+  font-weight:700;margin-bottom:14px;font-family:ui-monospace,monospace;
+}
+.lede{color:var(--ink-2);font-size:17.5px;margin:14px 0 30px;max-width:44rem;}
+h3{font-size:20px;font-weight:800;letter-spacing:.02em;margin:44px 0 12px;}
+h4{font-size:16px;font-weight:800;margin:28px 0 8px;color:var(--ink);}
+
+/* ---------- findings ---------- */
+.finding{border-top:1px solid var(--rule);padding-top:26px;margin-top:34px;}
+.finding-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px;}
+.chip{
+  font-size:11px;font-weight:700;letter-spacing:.12em;padding:3px 9px;
+  border:1px solid currentColor;border-radius:2px;white-space:nowrap;
+  font-family:ui-monospace,monospace;
+}
+.chip.p0{color:var(--bad);background:var(--bad-wash);}
+.chip.p1{color:var(--warn);background:var(--warn-wash);}
+.chip.p2{color:var(--ink-3);background:var(--sunk);}
+.finding-head h3{margin:0;font-size:21px;}
+.where{
+  font-size:12.5px;color:var(--ink-3);margin-bottom:16px;
+  font-family:ui-monospace,monospace;
+}
+.where a{color:var(--ink-3);}
+
+/* ---------- data slabs ---------- */
+.slab{
+  margin:26px 0;background:var(--surface);border:1px solid var(--rule);
+  box-shadow:var(--shadow);max-width:46rem;
+}
+.slab.wide{max-width:none;}
+/* keep running prose on a readable measure even outside .col */
+section > p, section > ul, section > ol,
+.finding > p, .finding > ul, .finding > ol,
+.phase > p, .phase > ul, .phase > ol,
+.note, pre{max-width:52rem;}
+section > ul, section > ol,
+.finding > ul, .finding > ol,
+.phase > ul, .phase > ol{max-width:46rem;}
+.sources ol{max-width:none;}
+.slab-head{
+  padding:14px 20px;border-bottom:1px solid var(--rule);
+  font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  font-weight:700;color:var(--ink-3);
+}
+.slab-body{padding:20px;overflow-x:auto;}
+.slab-foot{
+  padding:12px 20px;border-top:1px solid var(--rule);background:var(--sunk);
+  font-size:13.5px;line-height:1.7;color:var(--ink-2);
+}
+.wide{max-width:1072px;}
+
+table{border-collapse:collapse;width:100%;font-size:14.5px;line-height:1.55;}
+th,td{padding:9px 14px;text-align:left;border-bottom:1px solid var(--rule);vertical-align:top;}
+thead th{
+  font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+  font-weight:700;border-bottom:1px solid var(--rule-strong);white-space:nowrap;
+}
+tbody tr:last-child td{border-bottom:none;}
+td.n,th.n{text-align:right;font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums;white-space:nowrap;}
+tr.hi td{background:var(--bad-wash);}
+tr.ok td{background:var(--good-wash);}
+.t-good{color:var(--good);font-weight:700;}
+.t-bad{color:var(--bad);font-weight:700;}
+.t-mute{color:var(--ink-3);}
+
+/* ---------- code ---------- */
+pre{
+  margin:18px 0;background:var(--code-bg);border:1px solid var(--rule);
+  padding:16px 18px;overflow-x:auto;font-size:13.5px;line-height:1.72;
+  border-radius:3px;
+}
+pre code{font-size:inherit;}
+p code,li code,td code{
+  background:var(--code-bg);padding:1px 5px;border-radius:3px;font-size:.88em;
+  border:1px solid var(--rule);
+}
+.del{color:var(--bad);}
+.add{color:var(--good);}
+.cmt{color:var(--ink-3);}
+
+/* ---------- figures ---------- */
+figure{margin:34px 0;}
+figure svg{display:block;width:100%;max-width:100%;height:auto;color:var(--ink);}
+/* diagram semantics ride on tokens so both themes resolve as a set */
+svg .d-bad{color:var(--bad);}
+svg .d-good{color:var(--good);}
+svg .mk-ink{fill:var(--ink);}
+svg .mk-bad{fill:var(--bad);}
+svg .mk-good{fill:var(--good);}
+figcaption{
+  margin-top:14px;font-size:13.5px;line-height:1.72;color:var(--ink-2);
+  padding-left:14px;border-left:2px solid var(--rule-strong);max-width:44rem;
+}
+
+/* ---------- lists ---------- */
+ul,ol{margin:0 0 1.1em;padding-left:1.4em;}
+li{margin-bottom:.5em;}
+li::marker{color:var(--ink-3);}
+ul.tight li{margin-bottom:.25em;}
+
+/* ---------- callout ---------- */
+.note{
+  margin:26px 0;padding:18px 20px;background:var(--accent-wash);
+  border:1px solid var(--rule);border-radius:3px;font-size:15.5px;line-height:1.75;
+}
+.note b{color:var(--accent);}
+
+/* ---------- roadmap ---------- */
+.phase{border-top:1px solid var(--rule-strong);padding-top:22px;margin-top:34px;}
+.phase-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;}
+.phase-n{
+  font-family:ui-monospace,monospace;font-size:12px;letter-spacing:.16em;
+  color:var(--accent);font-weight:700;
+}
+.phase-head h3{margin:0;font-size:22px;}
+.phase-when{font-size:13px;color:var(--ink-3);font-family:ui-monospace,monospace;}
+.phase-goal{
+  margin:10px 0 18px;font-size:15.5px;color:var(--ink-2);
+  padding-left:14px;border-left:2px solid var(--accent);
+}
+
+/* ---------- sources ---------- */
+.sources{margin-top:80px;padding-top:26px;border-top:1px solid var(--rule-strong);}
+.sources h2{border:none;margin:0 0 18px;padding:0;font-size:20px;}
+.sources ol{font-size:13.5px;line-height:1.8;color:var(--ink-2);columns:2;column-gap:40px;}
+.sources li{break-inside:avoid;}
+a{color:var(--accent);text-decoration:underline;text-underline-offset:2px;
+  text-decoration-thickness:1px;text-decoration-color:var(--rule-strong);}
+a:hover{text-decoration-color:var(--accent);}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px;}
+
+@media (max-width:720px){
+  body{font-size:16px;}
+  .page{padding:0 18px 80px;}
+  .masthead{padding:48px 0 32px;}
+  .sources ol{columns:1;}
+  figcaption{padding-left:12px;}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
+</style>
+
+<div class="page">
+
+<header class="masthead">
+  <div class="eyebrow">王國遠征 · 架構檢視 · 市場對標 · 升級路線</div>
+  <h1>從能玩的原型<br><span class="thin">到能留人的產品</span></h1>
+  <p class="deck">
+    這是一份對 <code>index.html</code>（單檔 30 KB、805 行）的完整體檢。技術體質意外地好，
+    但數值經濟已經斷裂：模擬顯示玩家累積的兵力在 Boss 戰前會被系統歸零，而核心的「選門」互動有
+    <b>87.5% 根本不構成選擇</b>。以下按嚴重度排序問題、對照 2026 年休閒遊戲市場的實際數字，並給出三階段的落地路線。
+  </p>
+  <div class="byline">
+    <span>檢視日期 <b>2026-08-10</b></span>
+    <span>標的 <b>miaomartin-rgb/kingdom-swipe</b></span>
+    <span>版本 <b>1119df9</b></span>
+    <span>方法 <b>原始碼審查 + 數值模擬（300 次/關）+ 市場資料</b></span>
+  </div>
+</header>
+
+<div class="verdict">
+  <div class="v-keep">
+    <h3>保留</h3>
+    <p><strong>30 KB、零外部資產、開啟即玩。</strong>Poki 要求首次下載 &lt; 8 MB，CrazyGames 手機首頁位要求 &lt; 20 MB — 你目前用掉配額的 <b>0.4%</b>。這是網頁通路上罕見的結構性優勢，任何升級都不該犧牲它。</p>
+  </div>
+  <div class="v-fix">
+    <h3>必修</h3>
+    <p><strong>經濟迴圈。</strong>閘門給指數收入、雜兵團收線性成本、Boss 血量又反過來綁定兵力。三者疊加的結果是：第 6 關兵力達 3,690 萬，而雜兵團的損耗只佔 <b>0.002%</b>。玩得好與玩得爛，結局相同。</p>
+  </div>
+  <div class="v-move">
+    <h3>轉向</h3>
+    <p><strong>從 hyper-casual 走向 hybrid-casual。</strong>純 hyper-casual 的 D30 留存已低於 4%，而 hybrid-casual 的 LTV 是其 <b>3–5 倍</b>。目前專案沒有存檔、沒有進度、沒有任何變現掛載點 — 這三樣是同一件事的三個面向。</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="sn">§ 1</span>現況架構</h2>
+<div class="col stack">
+<p>
+整個遊戲是一個 IIFE，全部狀態集中在單一全域物件 <code>G</code>，透過 <code>update(dt)</code> 與
+<code>render()</code> 兩個函式在同一個 <code>requestAnimationFrame</code> 迴圈裡推進。
+渲染是 Canvas 2D 手刻的偽 3D 投影 — <code>scaleAt(z)</code> 算縮放、<code>px()</code>/<code>py()</code> 投影，
+再用畫家演算法由遠而近排序繪製。沒有引擎、沒有建置流程、沒有任何外部資產。
+</p>
+</div>
+
+<div class="slab wide">
+  <div class="slab-head">模組盤點（index.html · 805 行）</div>
+  <div class="slab-body">
+    <table>
+      <thead><tr>
+        <th>層</th><th>位置</th><th>實作</th><th class="n">評價</th>
+      </tr></thead>
+      <tbody>
+        <tr><td>畫布 / 投影</td><td class="mono">L78–103</td><td>DPR 上限 2、依寬高比切換 <code>CAM_H</code> 與 <code>FOCAL</code></td><td class="n t-good">紮實</td></tr>
+        <tr><td>音效</td><td class="mono">L105–121</td><td>WebAudio 即時合成 oscillator，零音檔</td><td class="n t-good">聰明</td></tr>
+        <tr><td>狀態</td><td class="mono">L124–135</td><td>單一全域 <code>G</code>，含 state / 關卡 / 特效佇列</td><td class="n t-mute">可接受</td></tr>
+        <tr><td>關卡生成</td><td class="mono">L137–200</td><td>程序生成閘門 + 雜兵團 + Boss</td><td class="n t-bad">數值散落</td></tr>
+        <tr><td>操控</td><td class="mono">L202–226</td><td>Pointer Events + 鍵盤，螢幕座標反投影</td><td class="n t-good">正確</td></tr>
+        <tr><td>群體渲染</td><td class="mono">L239–315</td><td>向日葵排列（黃金角 2.39996）+ 逐兵向量繪製</td><td class="n t-bad">效能瓶頸</td></tr>
+        <tr><td>場景</td><td class="mono">L317–529</td><td>天空預繪至離屏 canvas；地面 / 閘門 / Boss 逐幀重畫</td><td class="n t-mute">混合</td></tr>
+        <tr><td>HUD</td><td class="mono">L531–578</td><td>Canvas 內繪製，非 DOM</td><td class="n t-mute">難迭代</td></tr>
+        <tr><td>模擬</td><td class="mono">L580–684</td><td>變動 dt（上限 0.05），直接改寫 <code>G</code></td><td class="n t-bad">不可測</td></tr>
+        <tr><td>存檔 / 數據 / 變現</td><td class="mono">—</td><td>不存在</td><td class="n t-bad">缺口</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="slab-foot">
+    全檔 <code>localStorage</code>、<code>visibilitychange</code>、分析埋點、廣告 SDK、
+    <code>aria-*</code> 的出現次數皆為 <b>0</b>；每幀配置的漸層物件（<code>createLinearGradient</code> /
+    <code>createRadialGradient</code>）為 <b>9 處</b>，其中閘門的兩處會隨可見閘門數線性增加。
+  </div>
+</div>
+
+<div class="col stack">
+<h3>真正值得保護的三件事</h3>
+<ol>
+  <li><b>載入體積。</b>30 KB 純文字，冷啟動幾乎沒有等待。這直接決定了通路上架的難易度，也直接決定了廣告素材（playable ad）的可行性。</li>
+  <li><b>零資產管線。</b>士兵、Boss、天空、音效全部是程式碼生成的。沒有美術外包依賴，改配色只要改常數。</li>
+  <li><b>投影數學是對的。</b><code>screenToRoad()</code> 用玩家平面的縮放做反投影，拖曳手感與畫面一致，這部分不需要動。</li>
+</ol>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="sn">§ 2</span>市場座標：2026 年的休閒遊戲長什麼樣</h2>
+<p class="lede">
+先確立標尺，再談問題。以下是評估這個專案時應該對照的外部基準。
+</p>
+
+<div class="slab wide">
+  <div class="slab-head">2026 年基準數字</div>
+  <div class="slab-body">
+    <table>
+      <thead><tr><th>面向</th><th>市場現況</th><th>對本專案的意義</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>類型走向</b></td>
+          <td>Hyper-casual（單一機制、純廣告、高流失）持續讓位給 hybrid-casual（休閒核心 + meta 層 + IAP&nbsp;/&nbsp;廣告雙軌）；hybrid-casual 營收年增約 <b>37%</b>，D7 留存已反超一般 casual。</td>
+          <td>本專案是教科書式的 hyper-casual 原型。不做 meta 層就是選擇留在收縮中的區塊。</td>
+        </tr>
+        <tr>
+          <td><b>留存基準</b></td>
+          <td>D1 中位數約 26%；「及格」曲線 D1/D7/D30 = <b>35 / 15 / 5</b>；前四分位 40 / 20 / 10。Hyper-casual D30 常低於 4%。</td>
+          <td>目前關掉分頁即歸零，D1 結構上不可能成立。存檔是留存的前置條件，不是加分項。</td>
+        </tr>
+        <tr>
+          <td><b>單次時長</b></td>
+          <td>Hyper-casual 2–3 分鐘，hybrid-casual 2–5 分鐘；全體中位數 3.1–3.5 分鐘，每日 3.8–3.9 次。</td>
+          <td>單關約 60–90 秒，落點合理。需要的是「還想再開一關」的理由，不是更長的關卡。</td>
+        </tr>
+        <tr>
+          <td><b>變現組合</b></td>
+          <td>Hybrid-casual 約 <b>IAP 59% / 廣告 41%</b>。獎勵式影片在美國休閒品類 eCPM 約 <b>$10–40</b>（mediation 平均 $24），插頁 $5–15，橫幅 $0.5–3。</td>
+          <td>只做橫幅等於放棄 90% 的可及收入。獎勵式影片是唯一該優先接的格式。</td>
+        </tr>
+        <tr>
+          <td><b>獎勵式影片</b></td>
+          <td>看過獎勵式廣告的玩家留存高出 <b>20–30%</b>。建議佈點在摩擦點（失敗畫面、資源耗盡）；10 分鐘以內的 session 給 2–3 個機會。</td>
+          <td>目前「全軍覆沒」畫面只有兩顆按鈕，正好是整個遊戲流失最集中、也最該放復活的位置。</td>
+        </tr>
+        <tr>
+          <td><b>LTV 差距</b></td>
+          <td>Hybrid 的 LTV 可達純 hyper-casual 的 <b>3–5 倍</b>，主因是 IAP 打開了廣告到不了的天花板。</td>
+          <td>決定要不要做 meta 層，本質上是決定 LTV 的量級。</td>
+        </tr>
+        <tr>
+          <td><b>網頁通路</b></td>
+          <td>HTML5 市場已逾 <b>$60 億</b>。Poki 月遊玩數破 10 億，CrazyGames 月遊玩 3 億、月活 5,000 萬。分潤約 50–80%（CrazyGames 廣告 60% / 內購 70%；Playgama Bridge 一次打包多平台可留 80%）。</td>
+          <td>這是本專案最短的變現路徑 — 不需要 App Store 審核、不需要買量。</td>
+        </tr>
+        <tr class="ok">
+          <td><b>通路技術門檻</b></td>
+          <td>Poki 要求首次下載 &lt; <b>8 MB</b>、一鍵即玩；CrazyGames 首次下載 &lt; 50 MB（手機首頁位 &lt; 20 MB）、總檔數 &lt; 1,500、需同時支援桌機與手機瀏覽器。</td>
+          <td><b>已達標。</b>30 KB / 1 個檔案 / 觸控與鍵盤雙支援。缺的只有 SDK 接入。</td>
+        </tr>
+        <tr>
+          <td><b>買量成本</b></td>
+          <td>美國 Android 休閒 CPI 約 <b>$1.5–3.5</b>，iOS 為其 3–4 倍；競爭區域 CPI 年增 20–40%。</td>
+          <td>付費買量對這個階段的專案不成立。先靠通路自然流量驗證留存曲線。</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="sn">§ 3</span>結構性問題（依嚴重度）</h2>
+<p class="lede">
+以下每一項都用專案自己的程式碼跑過模擬。數字來自忠實移植 <code>index.html</code> 生成與結算邏輯的模擬器，
+每關 300 次、取中位數，玩家假設為「每個閘門都選最優」的完美玩家。
+模擬器已收錄於 <code>tools/balance-sim.js</code>，執行 <code>node tools/balance-sim.js</code>
+即可重現本節所有表格（固定種子 <code>20260810</code>）。
+</p>
+
+<!-- P0-1 -->
+<div class="finding">
+  <div class="finding-head">
+    <span class="chip p0">P0 · 1</span>
+    <h3>Boss 血量綁定兵力，讓前面所有成長歸零</h3>
+  </div>
+  <div class="where">index.html:653 — <code>b.max = Math.max(b.base, Math.round(G.army*12));</code></div>
+  <div class="col stack">
+  <p>
+    進入王戰的瞬間，Boss 的血量被重新設定為<b>玩家當前兵力的 12 倍</b>；同時傷害輸出是
+    <code>G.army * 6 * dt</code>。兩者相除，戰鬥時間恆等於 2 秒左右，與兵力多寡無關。
+    唯一的變數是「兵力是否超過 <code>base</code> 門檻」— 超過就贏，沒超過就輸，中間沒有灰階。
+  </p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 780 300" role="img" aria-label="經濟迴圈圖：兵力經過閘門指數成長、被雜兵團線性扣減，最後 Boss 血量又反向綁定兵力，形成一條讓成長失效的回授邊">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path class="mk-ink" d="M0,0 L10,5 L0,10 z"/>
+        </marker>
+        <marker id="ahb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path class="mk-bad" d="M0,0 L10,5 L0,10 z"/>
+        </marker>
+        <marker id="ahg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path class="mk-good" d="M0,0 L10,5 L0,10 z"/>
+        </marker>
+      </defs>
+
+      <!-- spine -->
+      <g fill="none" stroke="currentColor" stroke-width="1.5">
+        <line x1="112" y1="176" x2="176" y2="176" marker-end="url(#ah)"/>
+        <line x1="304" y1="176" x2="368" y2="176" marker-end="url(#ah)"/>
+        <line x1="496" y1="176" x2="560" y2="176" marker-end="url(#ah)"/>
+      </g>
+
+      <!-- nodes -->
+      <g stroke="currentColor" stroke-width="1.5" fill="none">
+        <rect x="20" y="152" width="92" height="48" rx="2"/>
+        <rect x="176" y="140" width="128" height="72" rx="2"/>
+        <rect x="368" y="140" width="128" height="72" rx="2"/>
+        <rect x="560" y="140" width="128" height="72" rx="2"/>
+      </g>
+      <g fill="currentColor" font-size="13" text-anchor="middle" font-weight="700">
+        <text x="66" y="181">起始 35</text>
+        <text x="240" y="170">閘門</text>
+        <text x="432" y="170">雜兵團</text>
+        <text x="624" y="170">Boss</text>
+      </g>
+      <g fill="currentColor" font-size="11.5" text-anchor="middle" opacity=".72">
+        <text x="240" y="190" font-family="ui-monospace,monospace">×2 · +N</text>
+        <text x="432" y="190" font-family="ui-monospace,monospace">− N（固定）</text>
+        <text x="624" y="190" font-family="ui-monospace,monospace">HP = ?</text>
+      </g>
+
+      <!-- growth annotations -->
+      <g font-size="11.5" text-anchor="middle">
+        <text class="d-good" x="240" y="126" fill="currentColor" font-weight="700">指數 · 每關 5–9 次</text>
+        <text x="432" y="126" fill="currentColor" opacity=".6">線性 · 第 6 關僅佔 0.002%</text>
+      </g>
+
+      <!-- the fatal feedback edge -->
+      <g class="d-bad">
+        <path d="M240 212 L240 254 L624 254 L624 216" fill="none" stroke="currentColor"
+              stroke-width="2" marker-end="url(#ahb)"/>
+        <text x="432" y="274" fill="currentColor" font-size="12.5" text-anchor="middle" font-weight="700"
+              font-family="ui-monospace,monospace">b.max = 兵力 × 12</text>
+        <text x="432" y="291" fill="currentColor" font-size="11.5" text-anchor="middle" opacity=".9">
+          Boss 自動長到跟你一樣大 → 戰鬥恆為 2.6 秒
+        </text>
+      </g>
+
+      <!-- proposed replacement edge -->
+      <g class="d-good">
+        <path d="M624 140 L624 92 L658 92" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ahg)"/>
+        <text x="672" y="76" fill="currentColor" font-size="12" font-weight="700"
+              font-family="ui-monospace,monospace" text-anchor="start">建議</text>
+        <text x="672" y="96" fill="currentColor" font-size="11.5" text-anchor="start">HP = f(關卡)</text>
+        <text x="672" y="113" fill="currentColor" font-size="11" text-anchor="start" opacity=".85">與兵力脫鉤</text>
+      </g>
+    </svg>
+    <figcaption>
+      紅色那條邊是問題本身：它把玩家累積的兵力直接寫進 Boss 的血量，等於宣告前面所有選門的努力無效。
+      綠色虛線是建議 — 讓 Boss 血量只由關卡決定，兵力才會重新變成有意義的變數。
+    </figcaption>
+  </figure>
+
+  <div class="slab wide">
+    <div class="slab-head">王戰模擬：帶 400 人和帶 20,000 人的差別</div>
+    <div class="slab-body">
+      <table>
+        <thead><tr>
+          <th>關卡</th><th class="n">進場兵力</th><th class="n">Boss 血量</th>
+          <th class="n">戰鬥時長</th><th>結果</th><th class="n">存活率</th>
+        </tr></thead>
+        <tbody>
+          <tr><td>第 1 關</td><td class="n">30</td><td class="n">360</td><td class="n">3.02 s</td><td class="t-good">勝</td><td class="n">38.7%</td></tr>
+          <tr><td>第 1 關</td><td class="n">20,000</td><td class="n">240,000</td><td class="n">2.58 s</td><td class="t-good">勝</td><td class="n">58.7%</td></tr>
+          <tr class="hi"><td>第 5 關</td><td class="n">60</td><td class="n">2,243</td><td class="n">8.98 s</td><td class="t-bad">敗</td><td class="n">0%</td></tr>
+          <tr><td>第 5 關</td><td class="n">120</td><td class="n">2,243</td><td class="n">6.32 s</td><td class="t-good">勝</td><td class="n">17.8%</td></tr>
+          <tr class="ok"><td>第 5 關</td><td class="n">400</td><td class="n">4,800</td><td class="n">2.72 s</td><td class="t-good">勝</td><td class="n">52.5%</td></tr>
+          <tr class="ok"><td>第 5 關</td><td class="n">2,000</td><td class="n">24,000</td><td class="n">2.68 s</td><td class="t-good">勝</td><td class="n">53.7%</td></tr>
+          <tr class="ok"><td>第 5 關</td><td class="n">20,000</td><td class="n">240,000</td><td class="n">2.68 s</td><td class="t-good">勝</td><td class="n">53.9%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="slab-foot">
+      綠色三列是同一關、兵力差 50 倍的三場戰鬥：時長差 0.04 秒，存活率差 1.4 個百分點。
+      玩家花整關累積的 50 倍優勢，在王戰中的價值等於零。
+    </div>
+  </div>
+
+  <h4>建議修法</h4>
+  <pre><code><span class="del">- b.max = Math.max(b.base, Math.round(G.army*12));
+- b.hp  -= G.army * 6 * dt;</span>
+<span class="add">+ // 血量只由關卡決定，兵力回歸為玩家的實際籌碼
++ b.max = b.base;                       // 300 * lv^1.25
++ b.hp  -= Math.pow(G.army, 0.85) * K * dt;   // 次線性：多帶有用，但邊際遞減</span>
+</code><span class="cmt"># 次線性指數讓「多帶 2 倍兵」約等於「快 1.8 倍解決」，
+# 既獎勵累積，又避免兵力一旦爆炸就秒殺所有 Boss。</span></pre>
+</div>
+
+<!-- P0-2 -->
+<div class="finding">
+  <div class="finding-head">
+    <span class="chip p0">P0 · 2</span>
+    <h3>指數收入對線性成本：第 4 關之後數字失控</h3>
+  </div>
+  <div class="where">index.html:141–151（<code>makeOp</code>）· 630–645（雜兵團結算）· 188（過關繼承）</div>
+  <div class="col stack">
+  <p>
+    閘門提供 <code>×2</code>／<code>×3</code>（好結果中佔 45%），而雜兵團的結算是
+    <code>G.army -= d; q.count -= d;</code> — 雙方扣掉<b>相同的絕對值</b>。
+    也就是說清掉一個 40 人的雜兵團，永遠只花 40 人，不管你帶了 50 還是 5,000。
+    收入端是乘法、成本端是減法，這個結構必然發散。
+  </p>
+  </div>
+
+  <div class="slab wide">
+    <div class="slab-head">完美玩家的兵力曲線（300 次模擬中位數）</div>
+    <div class="slab-body">
+      <table>
+        <thead><tr>
+          <th>關卡</th><th class="n">抵達 Boss 的兵力</th><th class="n">雜兵團總損耗佔比</th>
+          <th class="n">相對渲染上限（130）</th><th>玩家看到的畫面</th>
+        </tr></thead>
+        <tbody>
+          <tr><td>第 1 關</td><td class="n">274</td><td class="n">34.3%</td><td class="n">2×</td><td>正常，成本有感</td></tr>
+          <tr><td>第 2 關</td><td class="n">1,398</td><td class="n">10.1%</td><td class="n">11×</td><td>群體已達視覺上限</td></tr>
+          <tr><td>第 3 關</td><td class="n">9,808</td><td class="n">2.9%</td><td class="n">75×</td><td>雜兵團開始無感</td></tr>
+          <tr class="hi"><td>第 4 關</td><td class="n">105,683</td><td class="n">0.34%</td><td class="n">813×</td><td>HUD 數字開始溢出</td></tr>
+          <tr class="hi"><td>第 5 關</td><td class="n">2,280,618</td><td class="n">0.027%</td><td class="n">17,543×</td><td>與第 2 關畫面完全相同</td></tr>
+          <tr class="hi"><td>第 6 關</td><td class="n">36,945,274</td><td class="n">0.002%</td><td class="n">284,194×</td><td>障礙物形同虛設</td></tr>
+          <tr class="hi"><td>第 8 關</td><td class="n">8,618,571,573</td><td class="n">0.000%</td><td class="n">66,296,704×</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="slab-foot">
+      第 8 關的 86 億會以 <code>8618571573</code> 的形式塞進 <code>Math.min(52, W*0.13)</code> 的字級裡橫向溢出畫面。
+      更關鍵的是：第 6 關之後，遊戲裡所有的「威脅」加總不到兵力的萬分之一。
+    </div>
+  </div>
+
+  <h4>建議修法：把成本改成比例制，把乘法變稀有</h4>
+  <ul>
+    <li><b>雜兵團改為百分比損耗。</b><code>lost = army * (squadPower / (army + squadPower))</code> — 帶得多仍然佔優（存活比例高），但永遠有代價，成本不會歸零。</li>
+    <li><b>乘法閘門稀有化。</b>把 <code>×2</code> 的出現率從 45% 降到 15–20%，每關至多 2 個，其餘改為加法與百分比（<code>+30%</code>）。加法為主的經濟成長是多項式而非指數。</li>
+    <li><b>過關繼承改為固定值。</b>目前 <code>Math.max(35, carry*0.45)</code> 會把爆炸值帶進下一關。改成 <code>min(carry*0.45, baseByLevel(lv))</code>，每關從可控的起點重新開始爬。</li>
+    <li><b>數字格式化。</b>超過 10,000 顯示 <code>1.2萬</code>／<code>3.4M</code>，避免 HUD 溢出。</li>
+  </ul>
+</div>
+
+<!-- P0-3 -->
+<div class="finding">
+  <div class="finding-head">
+    <span class="chip p0">P0 · 3</span>
+    <h3>核心互動有 87.5% 不構成選擇</h3>
+  </div>
+  <div class="where">index.html:152–158（<code>makeGate</code>）· 410–445（<code>drawGate</code> 綠 / 紅上色）</div>
+  <div class="col stack">
+  <p>
+    <code>makeGate</code> 有 72% 的機率產生「一好一壞」的組合，而 <code>drawGate</code>
+    又直接把好門畫成綠色、壞門畫成紅色，並標上 <code>×2</code> 或 <code>÷2</code>。
+    玩家不需要計算，只要避開紅色。這不是難度太低的問題 — 是<b>這個互動根本沒有在問玩家任何問題</b>。
+  </p>
+  </div>
+
+  <div class="slab">
+    <div class="slab-head">兩萬次閘門生成的分佈</div>
+    <div class="slab-body">
+      <table>
+        <thead><tr><th>閘門型態</th><th class="n">佔比</th><th>玩家實際在做的事</th></tr></thead>
+        <tbody>
+          <tr class="hi"><td>一好一壞（綠 / 紅）</td><td class="n">71.9%</td><td>躲開紅色。零計算。</td></tr>
+          <tr><td>兩個都好，但差距 &gt; 10%</td><td class="n">15.6%</td><td>掃一眼就知道，仍非兩難。</td></tr>
+          <tr class="ok"><td>兩個都好，差距 &lt; 10%</td><td class="n">12.5%</td><td>唯一需要判斷的情境。</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="slab-foot">
+      同類型頭部產品（Count Masters 一系）的張力來自「<code>×2</code> 好還是 <code>+30</code> 好，
+      取決於我現在有多少人、後面還有幾個障礙」。本專案把這個問題換成了「綠色還是紅色」。
+    </div>
+  </div>
+
+  <h4>建議修法：三種讓選擇重新變成選擇的做法</h4>
+  <ol>
+    <li>
+      <b>兩邊都是好處，但要看情境。</b>取消「壞門」，改為 <code>×2</code> vs <code>+45</code> 的組合。
+      當兵力低於 45 時加法較優、高於則乘法較優 — 交叉點會隨著遊戲進行不斷移動，玩家必須真的看自己的數字。
+      這是最小改動、最高收益的一步。
+    </li>
+    <li>
+      <b>風險 / 報酬合約。</b><code>×3</code> 但下一個雜兵團規模翻倍；<code>+20</code> 但沿路清空障礙。
+      在門上就把代價標示清楚，讓玩家自己決定要不要賭。
+    </li>
+    <li>
+      <b>兵種閘門。</b>劍士 / 弓手 / 盾兵，對雜兵團與 Boss 的效率不同（例如弓手打 Boss 加成、盾兵過雜兵團損耗減半）。
+      操作完全不變（還是左右拖曳），但決策深度立刻上一個量級，同時也自然打開了 meta 層的升級標的。
+    </li>
+  </ol>
+  <div class="note">
+    <b>順帶一提：</b>閘門判定用的是 <code>G.x &lt; 0 ? o.left : o.right</code> — 只看隊伍中心點。
+    但 130 人的隊形半徑約 3.3 個世界單位，接近半條車道。玩家會看到半數士兵明明穿過了左門，
+    結算卻算右門。同類產品的做法是<b>讓群體真的依位置分裂</b>，兩邊分別結算再合併 — 這同時解決了判定爭議，也是一個很強的視覺賣點。
+  </div>
+</div>
+
+<!-- P0-4 -->
+<div class="finding">
+  <div class="finding-head">
+    <span class="chip p0">P0 · 4</span>
+    <h3>沒有存檔：關掉分頁即歸零</h3>
+  </div>
+  <div class="where">全檔 <code>localStorage</code> 出現次數 = 0 · <code>G.best</code> 僅存在於記憶體（L134）</div>
+  <div class="col stack">
+  <p>
+    最高紀錄、關卡進度、靜音設定全部隨頁面卸載消失。以留存的定義來說，
+    這個遊戲的 D1 留存<b>在結構上不可能存在</b> — 回訪的玩家看到的是一款他沒玩過的遊戲。
+    對照市場基準的 D1 中位數 26%、及格線 35%，這不是調校問題，是缺一個 20 行的模組。
+  </p>
+  <p>
+    這也是為什麼「存檔、進度、變現」我在開頭把它們算作同一件事：
+    沒有持久化狀態，就沒有 meta 進度可言；沒有 meta 進度，獎勵式廣告就沒有東西可以獎勵。
+    整條 hybrid-casual 的鏈條都掛在這個檔案上。
+  </p>
+  </div>
+  <pre><code><span class="cmt">// save.js — 這是整份報告裡投報率最高的 20 行</span>
+const KEY = 'kingdom.v1';
+const DEFAULTS = { best:0, maxLevel:1, gold:0, upgrades:{}, muted:false, runs:0 };
+
+export function load(){
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }; }
+  catch { return { ...DEFAULTS }; }          <span class="cmt">// 隱私模式 / 配額滿時安靜退回預設</span>
+}
+export function save(patch){
+  const next = { ...load(), ...patch };
+  try { localStorage.setItem(KEY, JSON.stringify(next)); } catch {}
+  return next;
+}</code></pre>
+</div>
+
+<!-- P1-5 -->
+<div class="finding">
+  <div class="finding-head">
+    <span class="chip p1">P1 · 5</span>
+    <h3>群體渲染上限 130，成長的爽感在第 2 關就封頂</h3>
+  </div>
+  <div class="where">index.html:307 <code>const n = Math.min(count, 130);</code> · 245–247 <code>crowdRadiusMul</code> 上限 1.45</div>
+  <div class="col stack">
+  <p>
+    這類遊戲的多巴胺來源就是「人變多」的視覺回饋。但目前無論兵力是 130 還是 1,300 萬，
+    畫面上都是 130 個小人、半徑倍率封頂在 1.45。玩家最強烈的成就感訊號，在第 2 關之後就永久失效了。
+  </p>
+  <p>
+    同時這也是效能瓶頸的所在：<code>drawUnit</code> 每個士兵約 8–10 次 Canvas 路徑操作
+    （陰影橢圓、雙腿、圓角身體、腰帶、頭、頭盔弧、武器線），玩家與敵軍同框時逼近
+    <b>2,600 次路徑操作／幀</b>；<code>drawCrowd</code> 還每幀為每個群體配置新陣列並排序。
+    低階 Android 會在此掉幀。
+  </p>
+  </div>
+
+  <h4>建議修法：一石二鳥的 LOD + 精靈圖</h4>
+  <ul>
+    <li>
+      <b>預繪精靈。</b>啟動時把士兵以 6–8 個尺寸級距（如 4/8/16/32/64 px）各繪製 2–3 個走路影格到離屏 canvas，
+      執行期改用 <code>drawImage</code>。單兵成本從 ~10 次路徑操作降為 1 次 blit，實測量級可省 5–10 倍。
+    </li>
+    <li>
+      <b>三段 LOD 讓成長重新可見。</b>近處畫 60 個完整精靈；中距畫 200 個 2×3 px 色塊；
+      遠處用一張「人海」貼圖，其寬度與 <code>log(兵力)</code> 成正比。這樣 1,300 人和 130 人看起來就會有差別，
+      而總繪製成本反而下降。
+    </li>
+    <li>
+      <b>快取漸層。</b>目前 9 處逐幀 <code>createLinearGradient</code>／<code>createRadialGradient</code>。
+      除了尺寸相依的以外，全部在 <code>resize()</code> 時建立一次即可。
+    </li>
+    <li>
+      <b>粒子物件池。</b><code>G.parts</code> 目前逐幀 <code>push</code>／<code>splice</code>，改為固定長度陣列 + 存活旗標。
+    </li>
+  </ul>
+</div>
+
+<!-- P1-6 -->
+<div class="finding">
+  <div class="finding-head">
+    <span class="chip p1">P1 · 6</span>
+    <h3>沒有任何變現與數據掛載點</h3>
+  </div>
+  <div class="where">全檔廣告 SDK、分析埋點出現次數 = 0 · 結果畫面（L62–70）僅「繼續」與「重新開始」兩顆按鈕</div>
+  <div class="col stack">
+  <p>
+    失敗畫面是整個遊戲流失最集中的位置，也是市場資料明確指出應該放獎勵式影片的位置
+    （摩擦點：失敗、資源耗盡、進度受阻）。目前這個位置只有兩顆按鈕。
+  </p>
+  </div>
+
+  <div class="slab wide">
+    <div class="slab-head">建議的獎勵式影片佈點（單場 3 次上限，符合 10 分鐘內 session 的 2–3 次建議值）</div>
+    <div class="slab-body">
+      <table>
+        <thead><tr><th>位置</th><th>觸發時機</th><th>獎勵</th><th>設計理由</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>復活</b></td><td>全軍覆沒畫面</td><td>以 50% 兵力原地續戰，每場限一次</td>
+            <td>最高價值的位置。直接把流失轉成一次曝光 + 一次延長 session。</td>
+          </tr>
+          <tr>
+            <td><b>結算加倍</b></td><td>過關結算</td><td>金幣 ×2</td>
+            <td>正向情緒下的曝光，接受率最高，且不影響未看廣告玩家的體驗。</td>
+          </tr>
+          <tr>
+            <td><b>出征增益</b></td><td>開始新關卡前</td><td>起始兵力 +50% 或一次性乘法閘門</td>
+            <td>把廣告變成玩家主動想要的東西，而不是打斷。</td>
+          </tr>
+          <tr>
+            <td><b>離線寶箱</b></td><td>回訪時</td><td>離線累積金幣加倍</td>
+            <td>綁定回訪動機，直接作用在 D1／D7。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="slab-foot">
+      插頁廣告建議只放在「連續 3 關結束」且不與獎勵式影片相鄰的位置。橫幅在這種全螢幕觸控遊戲裡
+      eCPM 低（$0.5–3）又干擾操作，不建議。
+    </div>
+  </div>
+
+  <h4>最小埋點清單</h4>
+  <p>沒有這些事件，後面所有調校都是猜測：</p>
+  <ul class="tight">
+    <li><code>run_start</code> / <code>run_end</code>（關卡、結果、耗時、結束兵力）</li>
+    <li><code>gate_choice</code>（左右、兩側運算、選擇前兵力）— 這是驗證 P0·3 是否修好的唯一依據</li>
+    <li><code>level_fail</code>（死在哪個物件、當時兵力）— 找出難度斷點</li>
+    <li><code>ad_offer</code> / <code>ad_start</code> / <code>ad_complete</code>（位置）</li>
+    <li><code>session_start</code>、<code>d1_return</code></li>
+  </ul>
+</div>
+
+<!-- P2 -->
+<div class="finding">
+  <div class="finding-head">
+    <span class="chip p2">P2</span>
+    <h3>其他應一併處理的項目</h3>
+  </div>
+  <div class="col">
+  <ul>
+    <li><b>音訊無法復原。</b><code>AudioContext</code> 在 pointerdown 建立（L212）但從未呼叫 <code>.resume()</code>。iOS 上分頁切換後 context 進入 suspended 就永久靜音。修法：每次使用者互動時 <code>if(actx.state==='suspended') actx.resume()</code>。</li>
+    <li><b>沒有 <code>visibilitychange</code> 處理。</b>切回分頁時 <code>last</code> 仍是舊時戳；雖然 <code>dt</code> 有 0.05 上限擋住了，但應該明確暫停並在回來時重置計時。</li>
+    <li><b><code>window.__game = G</code>（L801）對外暴露。</b>開發便利，但上架通路或做排行榜前必須移除或以建置旗標包起來。</li>
+    <li><b>色覺無障礙。</b>閘門的好壞主要靠綠 / 紅區分，約 8% 男性受影響。<code>×</code>／<code>÷</code> 符號提供了部分冗餘，但應再加形狀差異（例如好門用實線框、壞門用鋸齒框）。若採用 P0·3 的「兩邊都好」方案，此問題自然消失。</li>
+    <li><b>沒有 PWA manifest / Service Worker。</b>30 KB 的遊戲離線可玩幾乎是免費的，且能加入主畫面。</li>
+    <li><b>沒有 Open Graph / 分享中繼標籤。</b>網頁遊戲的自然傳播全靠這個。</li>
+    <li><b>勝利後有 700 ms 空窗。</b><code>win()</code> 在 700 ms 後才切換 <code>G.state</code>（L774），期間玩家隊伍會繼續往前跑出關卡尾端。應在擊殺瞬間就凍結推進。</li>
+    <li><b>HUD 畫在 Canvas 裡。</b>短期沒問題，但 meta 層（升級樹、商店、通行證）用 DOM 迭代會快得多。建議 HUD 逐步搬到 DOM 疊層。</li>
+  </ul>
+  </div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="sn">§ 4</span>架構升級：讓數值可以被測試</h2>
+<p class="lede">
+本報告所有數字都來自我另外手寫的模擬器 — 因為現有程式碼<b>無法在沒有 canvas 的情況下跑</b>。
+這正是問題所在：一個以數值為核心的遊戲，卻沒有辦法自動驗證數值。這是拆分模組最實際的理由，
+不是為了「架構好看」。
+</p>
+
+<figure>
+  <svg viewBox="0 0 780 272" role="img" aria-label="架構對比圖：現況中 update 與 render 共用全域狀態且都依賴 canvas，數值測試無法接入；建議架構把純函式 sim 與 render 分離，讓平衡性測試不需瀏覽器即可直接驅動模擬">
+    <defs>
+      <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path class="mk-ink" d="M0,0 L10,5 L0,10 z"/>
+      </marker>
+      <marker id="a2g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path class="mk-good" d="M0,0 L10,5 L0,10 z"/>
+      </marker>
+      <marker id="a2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path class="mk-bad" d="M0,0 L10,5 L0,10 z"/>
+      </marker>
+    </defs>
+
+    <!-- panel divider + labels -->
+    <line x1="390" y1="8" x2="390" y2="264" stroke="currentColor" stroke-width="1" opacity=".25"/>
+    <text x="20" y="24" font-size="12" font-weight="700" fill="currentColor"
+          letter-spacing="2" font-family="ui-monospace,monospace" opacity=".7">現況</text>
+    <text class="d-good" x="420" y="24" font-size="12" font-weight="700" fill="currentColor"
+          letter-spacing="2" font-family="ui-monospace,monospace">建議</text>
+
+    <!-- LEFT: current -->
+    <g stroke="currentColor" stroke-width="1.5" fill="none">
+      <rect x="20" y="52" width="340" height="106" rx="2" stroke-dasharray="4 3" opacity=".45"/>
+      <rect x="44" y="88" width="112" height="42" rx="2"/>
+      <rect x="224" y="88" width="112" height="42" rx="2"/>
+      <rect x="134" y="200" width="112" height="40" rx="2"/>
+    </g>
+    <g fill="currentColor" font-size="12.5" text-anchor="middle" font-weight="700"
+       font-family="ui-monospace,monospace">
+      <text x="100" y="114">update()</text>
+      <text x="280" y="114">render()</text>
+      <text x="190" y="225">canvas / ctx</text>
+    </g>
+    <text x="190" y="72" font-size="11.5" fill="currentColor" text-anchor="middle" opacity=".6">IIFE · 全域 G</text>
+    <g stroke="currentColor" stroke-width="1.5" fill="none">
+      <path d="M145 130 L145 198" marker-end="url(#a2)"/>
+      <path d="M235 130 L235 198" marker-end="url(#a2)"/>
+      <path d="M156 102 L222 102" marker-end="url(#a2)"/>
+      <path d="M224 118 L158 118" marker-end="url(#a2)"/>
+    </g>
+    <text x="190" y="96" font-size="10.5" fill="currentColor" text-anchor="middle" opacity=".62">共享可變狀態</text>
+
+    <!-- test blocked: cannot reach update() from outside the IIFE -->
+    <g class="d-bad">
+      <g stroke="currentColor" stroke-width="1.5" fill="none">
+        <rect x="20" y="200" width="88" height="40" rx="2" stroke-dasharray="4 3"/>
+        <path d="M64 198 L64 138" stroke-dasharray="5 4" marker-end="url(#a2b)"/>
+        <path d="M55 167 L73 185 M73 167 L55 185" stroke-width="2"/>
+      </g>
+      <text x="64" y="224" font-size="11.5" fill="currentColor" text-anchor="middle" font-weight="700">數值測試</text>
+      <text x="64" y="258" font-size="10.5" fill="currentColor" text-anchor="middle" opacity=".9">綁死 ctx · 進不去</text>
+    </g>
+
+    <!-- RIGHT: proposed -->
+    <g class="d-good">
+      <g stroke="currentColor" stroke-width="1.5" fill="none">
+        <rect x="420" y="88" width="118" height="42" rx="2"/>
+        <rect x="596" y="88" width="118" height="42" rx="2"/>
+        <rect x="596" y="200" width="118" height="40" rx="2"/>
+        <rect x="420" y="200" width="118" height="40" rx="2"/>
+      </g>
+      <g fill="currentColor" font-size="12.5" text-anchor="middle" font-weight="700"
+         font-family="ui-monospace,monospace">
+        <text x="479" y="114">sim(s, dt)</text>
+        <text x="655" y="114">render(s)</text>
+        <text x="655" y="225">canvas</text>
+        <text x="479" y="225">balance.test</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1.5" fill="none">
+        <path d="M538 109 L594 109" marker-end="url(#a2g)"/>
+        <path d="M655 130 L655 198" marker-end="url(#a2g)"/>
+        <path d="M479 200 L479 132" marker-end="url(#a2g)"/>
+      </g>
+      <text x="566" y="100" font-size="10.5" fill="currentColor" text-anchor="middle">唯讀狀態</text>
+      <text x="566" y="62" font-size="11" fill="currentColor" text-anchor="middle" font-weight="700">固定步長 · 純函式</text>
+      <text x="490" y="168" font-size="10.5" fill="currentColor" text-anchor="start" opacity=".9">無需 canvas</text>
+      <text x="479" y="258" font-size="10.5" fill="currentColor" text-anchor="middle" opacity=".9">每秒數千場模擬</text>
+    </g>
+  </svg>
+  <figcaption>
+    差別只有一條邊：當 <code>sim</code> 不再依賴 <code>ctx</code>，測試就能直接驅動它。
+    <code>tools/balance-sim.js</code> 已經先示範了右半邊 — 它把生成與結算邏輯抄了一份出來，
+    才得以產生 § 3 的所有表格。這個階段要做的是讓遊戲本體直接用那一份，不必再維護兩套。
+  </figcaption>
+</figure>
+
+<div class="col stack">
+<h3>建議的檔案切分</h3>
+<p>
+維持零建置（原生 ES modules，瀏覽器直接載入），只在需要壓成單檔上架時跑一次 esbuild。
+不要引入 3D 引擎 — 那會直接摧毀 30 KB 的通路優勢，見 § 9。
+</p>
+</div>
+
+<pre><code>src/
+  balance.js      <span class="cmt">// 所有數值常數集中於此。目前散落在 8 個函式裡的魔術數字全部搬進來</span>
+  sim.js          <span class="cmt">// 純函式：(state, input, dt) → state。無 DOM、無 canvas、可在 Node 執行</span>
+  levelgen.js     <span class="cmt">// 帶種子的關卡生成（可重現 → 可回歸測試、可做每日挑戰）</span>
+  render/
+    scene.js      <span class="cmt">// 地面、天空、閘門、Boss</span>
+    crowd.js      <span class="cmt">// 精靈圖預繪 + 三段 LOD</span>
+    hud.js        <span class="cmt">// 逐步遷移到 DOM</span>
+  meta/
+    save.js       <span class="cmt">// localStorage 持久化</span>
+    upgrades.js   <span class="cmt">// 永久升級樹</span>
+    economy.js    <span class="cmt">// 金幣產出與定價</span>
+  platform/
+    adapter.js    <span class="cmt">// 統一介面：showRewarded() / gameplayStart() / gameplayStop()</span>
+    poki.js  crazygames.js  none.js   <span class="cmt">// 各通路實作，一份程式碼多處上架</span>
+  analytics.js
+test/
+  balance.test.js <span class="cmt">// 八關 × 300 次模擬，斷言兵力曲線落在預期區間</span>
+</code></pre>
+
+<div class="col">
+<h3>三個非結構性但關鍵的改動</h3>
+<ol>
+  <li>
+    <b>固定步長累加器。</b>目前戰鬥結算直接乘 <code>dt</code>，在 30 fps 與 144 fps 的裝置上結果會有微小差異。
+    改為固定 1/60 步長 + 累加器，模擬變得可重現，也才有辦法做回放與防作弊。
+  </li>
+  <li>
+    <b>帶種子的隨機。</b>把 <code>Math.random()</code> 換成 mulberry32 之類的 PRNG。
+    同一個種子產生同一關 — 這是回歸測試、每日挑戰、以及「和朋友比同一關」這類社交鉤子的共同前提。
+  </li>
+  <li>
+    <b>數值全部進 <code>balance.js</code>。</b>目前調一次難度要改 <code>makeOp</code>、<code>makeSquad</code>、
+    <code>buildLevel</code>、<code>startLevel</code>、以及 <code>update()</code> 裡的王戰段落五個地方。
+    集中之後，配合上面的測試，調校一輪從半小時降到一分鐘。
+  </li>
+</ol>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="sn">§ 5</span>Hybrid-casual 化：留存從哪裡來</h2>
+<p class="lede">
+市場資料指出玩家通常在第 3–5 次 session 需要碰到進度、解鎖或收集系統，通行證則多在 D3–D7 開放。
+以下是對應到本專案的最小可行 meta 層 — 刻意保持小，因為 meta 層失敗的常見原因是一次做太多。
+</p>
+
+<div class="slab wide">
+  <div class="slab-head">最小 meta 層</div>
+  <div class="slab-body">
+    <table>
+      <thead><tr><th>系統</th><th>內容</th><th>開放時機</th><th>作用的指標</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>金幣</b></td>
+          <td>過關依「殘存兵力 × 關卡」產出，是唯一的軟貨幣</td>
+          <td>第 1 關結束</td>
+          <td>建立第一個進度感</td>
+        </tr>
+        <tr>
+          <td><b>永久升級</b></td>
+          <td>起始兵力 · 雜兵團損耗減免 · Boss 傷害 · 金幣產出，各 10 級</td>
+          <td>第 2 關結束</td>
+          <td>D1 → D3。給「明天再來」一個具體理由</td>
+        </tr>
+        <tr>
+          <td><b>兵種解鎖</b></td>
+          <td>劍士（預設）→ 弓手 → 盾兵 → 騎兵，以關卡進度解鎖</td>
+          <td>第 3、6、10 關</td>
+          <td>同時餵養 § 3 的閘門深度與收集慾</td>
+        </tr>
+        <tr>
+          <td><b>每日挑戰</b></td>
+          <td>固定種子的單關，全球同一關，記錄最佳兵力</td>
+          <td>D2 起</td>
+          <td>回訪動機。技術前提是 § 4 的帶種子 PRNG</td>
+        </tr>
+        <tr>
+          <td><b>免廣告</b></td>
+          <td>單筆小額買斷，保留獎勵式影片（自願觀看）</td>
+          <td>累積 3 次廣告曝光後</td>
+          <td>唯一建議的第一個 IAP。轉換率高、不破壞平衡</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="slab-foot">
+    刻意<b>不</b>放在第一版：抽卡、能量體力、公會、賽季通行證。這些在 DAU 量級起來之前只會增加維護成本。
+    通行證等自然流量驗證了 D7 留存能站上 15% 再說。
+  </div>
+</div>
+
+<div class="col stack">
+<h3>前 30 秒</h3>
+<p>
+市場對 hyper/hybrid-casual 的判定幾乎在前 30 秒完成。目前的開場是一段文字說明加一顆「出征」按鈕，
+之後 3.2 秒的拖曳提示。建議改成：
+</p>
+<ol>
+  <li><b>不要開場選單。</b>直接進第 1 關，隊伍已經在跑。標題與說明改成疊在遊戲畫面上的第一個閘門旁提示。Poki 的「一鍵即玩」要求也指向同一件事。</li>
+  <li><b>第一個閘門必為 <code>×2</code> 且必在玩家當前所在側。</b>先給一次無條件的成功。</li>
+  <li><b>第二個閘門是真正的選擇</b>（<code>×2</code> vs <code>+45</code>），並在此時才顯示拖曳提示。</li>
+  <li><b>第 15 秒必須出現第一次雜兵團衝撞</b>，給予第一個明確的「我的累積有用」回饋。</li>
+  <li><b>第一關的 Boss 必勝</b>，且結算畫面立刻給金幣與第一個可購買的升級 — 在玩家離開之前就把 meta 層亮出來。</li>
+</ol>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="sn">§ 6</span>三階段路線</h2>
+<p class="lede">
+順序是刻意的：先讓遊戲本身成立，再讓它可被測量與擴充，最後才接通路。
+反過來做（先接 SDK 再修數值）會讓你用真實流量去驗證一個已知有問題的迴圈。
+</p>
+
+<div class="phase">
+  <div class="phase-head">
+    <span class="phase-n">階段 一</span>
+    <h3>止血</h3>
+    <span class="phase-when">約 1–2 週 · 不改架構</span>
+  </div>
+  <p class="phase-goal">目標：讓「玩得好」與「玩得爛」產生不同結局。這階段不碰模組拆分，全部在現有單檔內完成。</p>
+  <ul class="tight">
+    <li>Boss 血量與兵力脫鉤，傷害改為次線性（P0·1）</li>
+    <li>雜兵團改百分比損耗、乘法閘門稀有化、過關繼承設上限（P0·2）</li>
+    <li>閘門改為「兩邊都是好處」，移除綠 / 紅二分（P0·3）</li>
+    <li>加入 <code>save.js</code>，持久化最高紀錄 / 關卡 / 靜音（P0·4）</li>
+    <li>數字格式化（<code>1.2萬</code> / <code>3.4M</code>）、修正勝利後 700 ms 空窗、<code>AudioContext.resume()</code></li>
+  </ul>
+  <p><b>驗收：</b>手動玩到第 8 關，兵力峰值不超過 5,000；至少要能在第 5 關之後因為選錯門而輸掉一場。</p>
+</div>
+
+<div class="phase">
+  <div class="phase-head">
+    <span class="phase-n">階段 二</span>
+    <h3>產品化</h3>
+    <span class="phase-when">約 3–4 週</span>
+  </div>
+  <p class="phase-goal">目標：把調校從手感變成數據，並補上 hybrid-casual 的骨架。</p>
+  <ul class="tight">
+    <li>依 § 4 拆分模組，數值集中到 <code>balance.js</code>，導入固定步長與帶種子 PRNG</li>
+    <li>建立 <code>balance.test.js</code>，把本報告的模擬變成專案內建的回歸測試</li>
+    <li>精靈圖預繪 + 三段 LOD（P1·5）— 同時解決效能與「成長看不見」</li>
+    <li>金幣 + 永久升級樹 + 兵種解鎖（§ 5）</li>
+    <li>接入分析埋點與獎勵式影片的四個佈點（P1·6），先用 <code>none.js</code> 假實作跑通流程</li>
+    <li>重寫前 30 秒（§ 5）</li>
+  </ul>
+  <p><b>驗收：</b><code>npm test</code> 可在無瀏覽器環境跑完八關曲線斷言；低階 Android 上穩定 60 fps。</p>
+</div>
+
+<div class="phase">
+  <div class="phase-head">
+    <span class="phase-n">階段 三</span>
+    <h3>上通路</h3>
+    <span class="phase-when">約 5–8 週</span>
+  </div>
+  <p class="phase-goal">目標：用真實流量驗證留存曲線，取得第一筆收入。</p>
+  <ul class="tight">
+    <li>實作 <code>platform/</code> adapter，接 CrazyGames（可先走 Basic Launch，兩週試水不需完整 SDK）與 Poki（需申請邀請）</li>
+    <li>加入 PWA manifest + Service Worker + Open Graph 標籤</li>
+    <li>移除 <code>window.__game</code>，加基本的分數合理性檢查</li>
+    <li>用同一份程式碼輸出 playable ad 版本 — 30 KB 的體積讓這幾乎是免費的</li>
+    <li>依實際 D1 / D7 決定是否加入每日挑戰與免廣告 IAP</li>
+  </ul>
+  <p><b>驗收：</b>取得第一份真實留存曲線，對照下表判斷是否值得投入階段四。</p>
+</div>
+
+<div class="slab wide">
+  <div class="slab-head">驗收指標</div>
+  <div class="slab-body">
+    <table>
+      <thead><tr>
+        <th>指標</th><th class="n">目前</th><th class="n">階段三目標</th><th class="n">市場及格線</th><th class="n">市場前四分位</th>
+      </tr></thead>
+      <tbody>
+        <tr><td>D1 留存</td><td class="n t-bad">結構上為 0</td><td class="n">28%</td><td class="n">35%</td><td class="n">40%</td></tr>
+        <tr><td>D7 留存</td><td class="n t-bad">結構上為 0</td><td class="n">10%</td><td class="n">15%</td><td class="n">20%</td></tr>
+        <tr><td>D30 留存</td><td class="n t-bad">結構上為 0</td><td class="n">3%</td><td class="n">5%</td><td class="n">10%</td></tr>
+        <tr><td>單次時長</td><td class="n t-mute">未測量</td><td class="n">2.5–3 分</td><td class="n">3.1–3.5 分</td><td class="n">—</td></tr>
+        <tr><td>每日 session</td><td class="n t-mute">未測量</td><td class="n">2.5</td><td class="n">3.8</td><td class="n">6.0</td></tr>
+        <tr><td>獎勵式影片 / session</td><td class="n t-bad">0</td><td class="n">1.2</td><td class="n">2–3</td><td class="n">—</td></tr>
+        <tr><td>閘門「真決策」比例</td><td class="n t-bad">12.5%</td><td class="n">70%+</td><td class="n">—</td><td class="n">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="slab-foot">
+    最後一列不是市場指標，是本專案自己的核心健康度 — 可由 <code>gate_choice</code> 埋點直接算出：
+    兩側期望值差距在 15% 以內的閘門佔比。
+  </div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="sn">§ 7</span>不建議做的事</h2>
+<div class="col">
+<ol>
+  <li>
+    <b>不要換成 Three.js 或 Unity WebGL。</b>畫面確實會好看，但 30 KB 會變成 5–15 MB，
+    直接踩掉 Poki 的 8 MB 門檻與 CrazyGames 手機首頁位的 20 MB 門檻，並犧牲冷啟動速度 —
+    也就是犧牲掉這個專案目前<b>唯一</b>的結構性優勢。真要提升畫面，先做精靈圖與 LOD（P1·5），
+    效果好、成本低，而且順帶解決效能問題。
+  </li>
+  <li>
+    <b>不要增加操作複雜度。</b>跳躍、衝刺、多車道都會拉高學習成本，卻不解決「沒有選擇」這個真正的問題。
+    深度應該來自閘門的決策與兵種，而不是手指。
+  </li>
+  <li>
+    <b>不要先做 IAP 商城。</b>在 D1 留存站上 25% 之前，付費設計沒有作用對象。
+    第一個 IAP 應該是「免廣告」，且要等到獎勵式影片跑順了再上。
+  </li>
+  <li>
+    <b>不要在修好經濟迴圈之前買量。</b>美國 Android 休閒 CPI 已達 $1.5–3.5 且持續上漲；
+    把錢投進一個第 6 關就失去挑戰性的迴圈，只會用比較貴的方式確認它壞了。
+  </li>
+</ol>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="sources">
+<h2>資料來源</h2>
+<ol>
+  <li><a href="https://unity.com/blog/mobile-gaming-shift-hyper-hybrid-casual">Unity — Mobile Gaming's Shift from Hyper to Hybrid-Casual Games</a></li>
+  <li><a href="https://www.deconstructoroffun.com/blog/2026/2/2/state-of-mobile-2026">Deconstructor of Fun — State of Mobile 2026: 9 Key Trends</a></li>
+  <li><a href="https://www.blog.udonis.co/mobile-marketing/mobile-games/casual-games">Udonis — Casual Games Market in 2026: Trends, CPIs, ROAS</a></li>
+  <li><a href="https://gamegrowthadvisor.com/blog/2026-04-16-hybrid-casual-game-design-strategy-2026/">Game Growth Advisor — Hybrid Casual Games 2026: Design, Monetization and the Real Revenue Split</a></li>
+  <li><a href="https://gamegrowthadvisor.com/blog/2026-03-17-mobile-game-kpis-benchmarks-2026/">Game Growth Advisor — The 20 Mobile Game KPIs That Actually Matter in 2026</a></li>
+  <li><a href="https://blog.playio.co/d1-d7-d30-retention-benchmarks-2026">Playio — D1/D7/D30 Retention Benchmarks for 2026</a></li>
+  <li><a href="https://segwise.ai/blog/mobile-gaming-app-user-retention-strategies">Segwise — Mobile Game Retention Benchmarks 2026</a></li>
+  <li><a href="https://www.crazylabs.com/blog/hyper-casual-and-hybrid-casual-gaming-kpis/">CrazyLabs — Guide to Hyper-Casual and Hybrid-Casual Gaming KPIs</a></li>
+  <li><a href="https://coinis.com/glossary/rewarded-video">Coinis — Rewarded Video Ads: How They Work &amp; 2026 eCPMs</a></li>
+  <li><a href="https://unity.com/blog/the-fundamentals-of-rewarded-video-ad-placements">Unity — Rewarded Video Ad Placements: Strategy &amp; Best Practices</a></li>
+  <li><a href="https://revenueflex.com/blog/rewarded-video-ads-mobile-game-monetization/">RevenueFlex — Rewarded Video Ads: Complete Guide to Mobile Game Monetization</a></li>
+  <li><a href="https://playgama.com/blog/main/10-ways-to-monetize-html5-games-that-actually-work-in-2026/">Playgama — 10 Ways to Monetize HTML5 Games That Actually Work in 2026</a></li>
+  <li><a href="https://app.cinevva.com/guides/web-game-monetization">Cinevva — Web Game Monetization: What the Data Actually Says (2026)</a></li>
+  <li><a href="https://app.cinevva.com/guides/publish-game-crazygames">Cinevva — CrazyGames Developer Guide: Publish and Earn (2026)</a></li>
+  <li><a href="https://sdk.poki.com/new-requirements">Poki — SDK Requirements</a></li>
+  <li><a href="https://docs.crazygames.com/requirements/gameplay/">CrazyGames — Gameplay Requirements</a></li>
+  <li><a href="https://developer.crazygames.com/">CrazyGames Developer Portal</a></li>
+  <li><a href="https://amps33.com/insights/mobile-game-unit-economics-2026">Amps33 — Mobile Game Unit Economics 2026: CPI, LTV Benchmarks by Genre</a></li>
+  <li><a href="https://segwise.ai/blog/cpi-ipm-roas-benchmarks-optimizing-ad-spend">Segwise — 2026 CPI, IPM &amp; ROAS Benchmarks</a></li>
+  <li><a href="https://techrt.com/mobile-gaming-time-statistics/">TechRT — Mobile Gaming Time Statistics 2026</a></li>
+  <li><a href="https://apptail.io/app/count-masters-crowd-runner-3d-ngz/united-states">Apptail — Count Masters: Crowd Runner 3D，下載與營收估計</a></li>
+  <li><a href="https://studiokrew.com/blog/hybrid-casual-games-vs-traditional-mobile-games/">StudioKrew — Hybrid Casual Games vs Traditional Mobile Games: 2026 Strategy Guide</a></li>
+</ol>
+</section>
+
+</div>
