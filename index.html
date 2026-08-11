@@ -317,6 +317,7 @@ const BAL = {
   bossDmgExp : 0.85,     // 次線性：多帶有用，但邊際遞減
   // 血量對齊「設計上的期望兵力」，而不是玩家當下的兵力 ——
   // 這是關鍵差別：關卡決定難度，玩家的累積決定他打得多輕鬆。
+  siegeEvery : 5,      // 每幾關出現一次巨人召集。每關都有就不叫 bonus 了
   speedBase  : 10,
   speedStep  : 1.05,   // 每關 ×1.05
   speedCap   : 16,     // 上限。閘門間距 15，速度 16 時只剩約 0.94 秒可以比較兩邊
@@ -336,7 +337,7 @@ function fmtNum(n){
 
 /* ========== 存檔 ========== */
 const SAVE_KEY = 'kingdom.v1';
-const SAVE_DEFAULTS = { best:0, maxLevel:1, muted:false, runs:0, gold:0, up:null, rankF:0 };
+const SAVE_DEFAULTS = { best:0, maxLevel:1, muted:false, runs:0, gold:0, up:null, rankF:0, giant:null };
 function loadSave(){
   let s;
   try{ s = Object.assign({}, SAVE_DEFAULTS, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); }
@@ -464,8 +465,9 @@ function buildLevel(lv){
     objs.push(g); z += 15;
     if(i%2===1 || i===stages-1){ objs.push(makeSquad(z, lv, i)); z += 13; }
   }
-  // 城牆防守插曲：閘門跑完、王戰之前
-  z += 10; objs.push(makeSiege(z)); z += 16;
+  // 巨人召集：每 BAL.siegeEvery 關一次，排在閘門跑完、王戰之前
+  if(lv % BAL.siegeEvery === 0){ z += 10; objs.push(makeSiege(z)); z += 16; }
+  else z += 6;
   const hp = BAL.bossHp(lv);
   const boss = {type:'boss', z, hp, max:hp, base:hp, dps: 0.20 + lv*0.006,
     name: BOSSES[(lv-1)%BOSSES.length] + (lv>BOSSES.length?(' +'+Math.floor((lv-1)/BOSSES.length)):''),
@@ -493,8 +495,7 @@ function startLevel(lv, carry){
   G.combat=null; G.bossFight=false; G.siege=null; G.floats=[]; G.parts=[];
   RH = ROAD_HALF;
   G.checkpointArmy = G.army;
-  G.giant = null;
-  G.promo = null;
+  G.promo = null;   // 巨人刻意不在這裡清掉 —— 它要陪你打完接下來幾關
   reviveUsed = false;
   Analytics.send('run_start', {level:lv, army:G.army, up:loadSave().up});
   G.shake=0; G.flash=0;
@@ -567,6 +568,7 @@ function startSiege(o){
   o.foeHp = Math.max(6, SIEGE.hpC * Math.pow(o.army0, SIEGE.hpExp) *
                         (1 + SIEGE.hpLv * (G.level - 1)));
   o.setback = SIEGE.setback * MUL.loss();
+  G.giant = null;          // 重新召集，舊的巨人退場
   G.siege = o;
   RH = SIEGE.roadHalf;
   // 開場落在兩排敵人之間，不主動瞄準就只有半效 —— 站位必須是主動決定
@@ -1242,6 +1244,16 @@ function drawHUD(){
   ctx.font='800 12px system-ui'; ctx.fillStyle='rgba(255,255,255,.62)';
   ctx.fillText(TIER_NAME[G.rank|0]+' · 兵力', CX, yy+fs*0.62);
 
+  // 巨人隨行標記
+  if(G.giant && !G.siege){
+    ctx.textAlign='left'; ctx.textBaseline='top';
+    ctx.font='800 12px system-ui,sans-serif';
+    ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,.7)';
+    const gt = '🗡 巨人隨行 ×'+(1 + SIEGE.bossMul*G.giant.power).toFixed(2);
+    ctx.strokeText(gt, 14, top+26);
+    ctx.fillStyle='#7dffc0'; ctx.fillText(gt, 14, top+26);
+  }
+
   // 兵種晉升橫幅
   if(G.promo && G.promo.t >= 0){
     const t = G.promo.t;
@@ -1594,7 +1606,8 @@ function win(){
   G.best=Math.max(G.best,n);
   G.state='result';          // 立刻凍結推進，否則這 700ms 內隊伍會跑出關卡尾端
   const sv = loadSave();
-  saveGame({ best:G.best, maxLevel:Math.max(sv.maxLevel, G.level+1), runs:sv.runs+1, rankF:G.rankF });
+  saveGame({ best:G.best, maxLevel:Math.max(sv.maxLevel, G.level+1), runs:sv.runs+1,
+             rankF:G.rankF, giant:G.giant });
   lastReward = earnGold(n, G.level);
   Analytics.send('run_end', {result:'win', level:G.level, army:n, gold:lastReward});
   setTimeout(()=>{
@@ -1616,7 +1629,8 @@ function lose(){
   G.army=0;
   burst(G.x,G.z,30,'#ff6b8a'); G.shake=12;
   const sv = loadSave();
-  saveGame({ best:G.best, runs:sv.runs+1, rankF:G.rankF });
+  G.giant = null;   // 全軍覆沒，巨人也一起沒了
+  saveGame({ best:G.best, runs:sv.runs+1, rankF:G.rankF, giant:null });
   lastReward = earnGold(0, Math.max(0, G.level-1));
   Analytics.send('run_end', {result:'lose', level:G.level, gold:lastReward});
   setTimeout(()=>{
@@ -1739,6 +1753,7 @@ $('startBtn').onclick = ()=>{
 const saved = loadSave();
 G.best = saved.best;
 G.rankF = saved.rankF || 0;
+G.giant = saved.giant || null;
 G.rank  = Math.floor(G.rankF);
 muted  = saved.muted;
 document.getElementById('mute').textContent = muted ? '✕' : '♪';
