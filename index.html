@@ -259,7 +259,7 @@ const G = {
   siege:null,
   floats:[], parts:[],
   shake:0, flash:0, flashColor:'255,60,60',
-  best:0, tick:0
+  best:0, tick:0, rank:0
 };
 
 /* ========== 經濟數值 ==========
@@ -321,7 +321,7 @@ function fmtNum(n){
 
 /* ========== 存檔 ========== */
 const SAVE_KEY = 'kingdom.v1';
-const SAVE_DEFAULTS = { best:0, maxLevel:1, muted:false, runs:0, gold:0, up:null };
+const SAVE_DEFAULTS = { best:0, maxLevel:1, muted:false, runs:0, gold:0, up:null, rank:0 };
 function loadSave(){
   let s;
   try{ s = Object.assign({}, SAVE_DEFAULTS, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); }
@@ -364,7 +364,8 @@ const DEBUG = /[?&]debug=1/.test(location.search);
 const Analytics = {
   queue: [],
   send(name, props){
-    const ev = Object.assign({ t: Math.round(performance.now()), name }, props||{});
+    // props 先展開，name/t 後蓋上 —— 否則 props 裡的 name 會把事件名稱吃掉
+    const ev = Object.assign({}, props||{}, { t: Math.round(performance.now()), name });
     this.queue.push(ev);
     if(this.queue.length > 400) this.queue.shift();
     if(DEBUG) console.log('[analytics]', name, props||'');
@@ -476,7 +477,7 @@ function startLevel(lv, carry){
   G.objs = L.objs; G.length = L.length;
   G.combat=null; G.bossFight=false; G.siege=null; G.floats=[]; G.parts=[];
   G.checkpointArmy = G.army;
-  G.tier = tierFor(G.army);
+  G.promo = null;
   reviveUsed = false;
   Analytics.send('run_start', {level:lv, army:G.army, up:loadSave().up});
   G.shake=0; G.flash=0;
@@ -715,10 +716,13 @@ const FOE_TIERS = [
 ];
 ALLY_TIERS.forEach((t,i)=>{ t.id = i; });
 FOE_TIERS.forEach((t,i)=>{ t.id = 4 + i; });
-const allyPal = count => ALLY_TIERS[tierFor(count)];
-const foePal  = count => FOE_TIERS[tierFor(count)];
-// 敵人跟著玩家的兵力一起升級，雙方視覺同步
-const foePalForFight = () => foePal(G.army);
+// 軍階只升不降，而且跨關保留。
+// 每關的兵力都是從 ref(lv) 重新開始（40/60/90…），若直接用當下兵力決定造型，
+// 玩家會在每關開頭掉回民兵、再重新升一次步兵 —— 同一個晉升反覆出現，
+// 而且永遠到不了精銳。改成「歷史最高兵力換到的軍階」，晉升才是單向的獎勵。
+const allyPal = () => ALLY_TIERS[G.rank|0];
+const foePal  = () => FOE_TIERS[G.rank|0];
+const foePalForFight = () => FOE_TIERS[G.rank|0];
 
 /* ---------- 精靈圖：啟動與 resize 時預繪一次 ---------- */
 const SPR = { sizes:[5,8,12,18,26,38,56,82,120], frames:3, cache:null };
@@ -1156,7 +1160,31 @@ function drawHUD(){
   ctx.strokeText(txt, CX, yy);
   ctx.fillStyle=GRAD.armyText; ctx.fillText(txt, CX, yy);
   ctx.font='800 12px system-ui'; ctx.fillStyle='rgba(255,255,255,.62)';
-  ctx.fillText(TIER_NAME[tierFor(n)]+' · 兵力', CX, yy+fs*0.62);
+  ctx.fillText(TIER_NAME[G.rank|0]+' · 兵力', CX, yy+fs*0.62);
+
+  // 兵種晉升橫幅
+  if(G.promo && G.promo.t >= 0){
+    const t = G.promo.t;
+    const fade = t < 0.16 ? t/0.16 : (t > 1.40 ? Math.max(0, (1.85-t)/0.45) : 1);
+    const pop  = t < 0.16 ? 0.82 + 0.18*(t/0.16)
+                          : (t < 0.34 ? 1.08 - 0.08*((t-0.16)/0.18) : 1);
+    const by = H*0.30, bw = Math.min(W*0.78, 330)*pop, bh = 74*pop;
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = 'rgba(14,10,26,.82)';
+    roundRect(CX-bw/2, by-bh/2, bw, bh, 16); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,215,130,.75)'; ctx.lineWidth = 2;
+    roundRect(CX-bw/2, by-bh/2, bw, bh, 16); ctx.stroke();
+    ctx.textAlign='center';
+    ctx.textBaseline='alphabetic';
+    ctx.font='800 '+(13*pop)+'px system-ui,sans-serif';
+    ctx.fillStyle='#c9c2e6';
+    ctx.fillText('全軍晉升', CX, by - bh*0.10);
+    ctx.font='900 '+(30*pop)+'px system-ui,sans-serif';
+    ctx.fillStyle='#ffd257';
+    ctx.fillText(G.promo.name, CX, by + bh*0.30);
+    ctx.restore();
+  }
 
   // 城牆防守倒數
   if(G.siege){
@@ -1198,14 +1226,25 @@ function update(dt){
 
   // 兵種晉升的當下給一次明確回饋，否則玩家不會注意到自己的兵變了
   const nowTier = tierFor(G.army);
-  if(nowTier > (G.tier|0)){
-    G.tier = nowTier;
-    addFloat('晉升 · '+TIER_NAME[nowTier], '#ffe9a8', G.x, G.z+2.2, 1.35);
-    burst(G.x, G.z, 30, '#ffd257');
-    G.flash = 0.32; G.flashColor = '255,220,120';
-    beep(720,.18,'triangle',.07); setTimeout(()=>beep(980,.22,'triangle',.07), 130);
-    Analytics.send('tier_up', {tier:nowTier, name:TIER_NAME[nowTier], army:Math.round(G.army)});
-  } else if(nowTier < (G.tier|0)) G.tier = nowTier;
+  if(nowTier > (G.rank|0)){
+    G.rank = nowTier;
+    saveGame({ rank: nowTier });
+    // 起始 t 為負值 = 延後 0.35 秒才現身。晉升幾乎都發生在通過閘門的同一幀，
+    // 直接跳出來會被閘門自己的浮字、粒子、閃光蓋掉，玩家根本看不到。
+    G.promo = { name: TIER_NAME[nowTier], t: -0.35 };
+    Analytics.send('tier_up', {tier:nowTier, tierName:TIER_NAME[nowTier], army:Math.round(G.army)});
+  }
+
+  if(G.promo){
+    const was = G.promo.t;
+    G.promo.t += dt;
+    if(was < 0 && G.promo.t >= 0){          // 橫幅現身的那一刻才放特效
+      burst(G.x, G.z, 34, '#ffd257');
+      G.flash = 0.30; G.flashColor = '255,220,120';
+      beep(720,.18,'triangle',.07); setTimeout(()=>beep(980,.24,'triangle',.07), 130);
+    }
+    if(G.promo.t > 1.85) G.promo = null;
+  }
 
   const frozen = !!G.combat || G.bossFight || !!G.siege;
   if(!frozen){
@@ -1369,8 +1408,7 @@ function render(){
     else if(it.type==='squad') drawSquad(it);
     else if(it.type==='boss') drawBoss(it);
     else if(it.type==='player'){
-      const n = Math.max(1, Math.floor(G.army));
-      drawCrowd(G.x, G.z, n, allyPal(n), 1, 1);
+      drawCrowd(G.x, G.z, Math.max(1,Math.floor(G.army)), allyPal(), 1, 1);
     }
     else if(it.type==='horde') drawCrowd(0, it.z, 120, foePalForFight(), -1, 3.4);
     else if(it.type==='sfoe'){
@@ -1607,6 +1645,7 @@ $('startBtn').onclick = ()=>{
 /* ========== 啟動 ========== */
 const saved = loadSave();
 G.best = saved.best;
+G.rank = saved.rank|0;
 muted  = saved.muted;
 document.getElementById('mute').textContent = muted ? '✕' : '♪';
 // 上次打到第幾關就從那裡開始，回訪的人不用從頭重來
