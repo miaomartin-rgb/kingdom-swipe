@@ -28,4 +28,4 @@ node tools/balance-sim.js
 - `docs/architecture-review.html` — 架構檢視與升級建議（2026-08-10）
 - `tools/balance-sim.js` — 閘門／雜兵團／王戰模擬器，固定種子 20260810。
   裡面的 `BAL` 必須與 index.html 同步
-- `tools/siege-sweep.js` — 城牆防守平衡量測，直接跑真的 index.html（需 `npm i playwright`）
+- `tools/siege-sweep.js` — 巨人召集平衡量測，直接跑真的 index.html（需 `npm i playwright`）

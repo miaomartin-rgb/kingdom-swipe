@@ -1,23 +1,24 @@
 #!/usr/bin/env node
 /**
- * siege-sweep.js — 城牆防守（插曲）平衡量測
+ * siege-sweep.js — 巨人召集（插曲）平衡量測
  *
  * 直接開真的 index.html 跑，不重寫一份邏輯，所以量到的就是玩家會遇到的。
  * 用法：
  *   npm i playwright          # 只有這支工具需要，遊戲本身零依賴
  *   node tools/siege-sweep.js
  *
- * 每一列跑一場防守戰，控制「進場兵力 / 關卡 / 有沒有走位」三個變因。
+ * 每一列跑一場，控制「進場兵力 / 關卡 / 有沒有走位」三個變因。
  * 要看的三件事：
  *   1. 同一列的「有走位 vs 無走位」要拉得開 —— 否則站位沒有意義
- *   2. 固定走位條件下，兵力越多淨變化要越好 —— 否則累積兵力沒有意義
+ *   2. 固定走位條件下，兵力越多組裝度要越高 —— 否則累積兵力沒有意義
  *   3. 關卡越高同條件要越差 —— 否則沒有難度曲線
+ * 這一段不扣兵力，所以看的是組裝完成度與巨人威力，不是兵力增減。
  */
 'use strict';
 
 const CASES = [
   // [進場兵力, 關卡]
-  [150, 1], [400, 1], [1500, 1], [400, 3],
+  [150, 1], [560, 3], [1550, 4], [3300, 6],
 ];
 
 const CHROME_CANDIDATES = [
@@ -37,9 +38,9 @@ async function main() {
   const browser = await chromium.launch(executablePath ? { executablePath } : {});
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
 
-  console.log('城牆防守平衡量測  (index.html)');
-  console.log('兵力    關卡  走位   耗時    擊殺/配額  漏過   兵力(含獎勵)      淨變化');
-  console.log('─'.repeat(76));
+  console.log('巨人召集平衡量測  (index.html)');
+  console.log('兵力    關卡  走位   耗時    擊殺/配額  漏過   組裝度   巨人威力');
+  console.log('─'.repeat(72));
 
   for (const [army0, lv] of CASES) {
     for (const dodge of [0, 1]) {
@@ -56,12 +57,14 @@ async function main() {
         for (const o of G.objs) { if (o.type === 'gate') o.used = true; if (o.type === 'squad') o.dead = true; }
 
         // 會走位的玩家：把火力對準射程內人最多的那一排
+        // 你隔著隔牆平射，站在左道的 -L 就正對右道的 L
         const ai = setInterval(() => {
-          if (!G.siege || !dodge) return;
-          let best = -1, bx = 0;
-          for (const L of [-2.8, -0.95, 0.95, 2.8]) {
-            const n = G.siege.foes.filter(f => Math.abs(f.x - L) < 1.4 && f.z - G.z < 31).length;
-            if (n > best) { best = n; bx = L; }
+          if (!G.siege) return;
+          if (!dodge) { G.targetX = -2.1; return; }   // 不走位＝停在兩排之間
+          let best = -1, bx = -3.0;
+          for (const L of [1.4, 2.8, 4.2]) {
+            const n = G.siege.foes.filter(f => Math.abs(f.x - L) < 1.3 && f.z - G.z < 25).length;
+            if (n > best) { best = n; bx = -L; }
           }
           G.targetX = bx;
         }, 60);
@@ -72,19 +75,19 @@ async function main() {
           if (s) { last = { t: s.t, killed: s.killed, quota: s.quota, leaked: s.leaked }; return; }
           if (last && last.t > 0.5) {
             clearInterval(iv); clearInterval(ai);
-            res({ ...last, armyEnd: Math.round(G.army) });
+            res({ ...last, giant: G.giant ? +G.giant.power.toFixed(2) : 0 });
           }
         }, 80);
         setTimeout(() => { clearInterval(iv); clearInterval(ai); res(null); }, 30000);
       }), { army0, lv, dodge });
 
       if (!r) { console.log(`${army0} lv${lv}: TIMEOUT`); await page.close(); continue; }
-      const net = ((r.armyEnd / army0 - 1) * 100).toFixed(0);
+      const built = Math.round(Math.min(1, r.killed / r.quota) * 100);
       console.log(
         `${String(army0).padStart(5)}   lv${lv}   ${dodge ? '有' : '無'}   ` +
-        `${String(r.t.toFixed(1) + 's').padStart(6)}   ${String(r.killed + '/' + r.quota).padStart(8)}  ` +
-        `${String(r.leaked).padStart(4)}   ${String(army0 + ' -> ' + r.armyEnd).padStart(15)}   ` +
-        `${(net >= 0 ? '+' : '') + net}%`);
+        `${String(r.t.toFixed(1) + 's').padStart(6)}   ${String(Math.round(r.killed) + '/' + r.quota).padStart(8)}  ` +
+        `${String(r.leaked).padStart(4)}   ${String(built + '%').padStart(6)}   ` +
+        `${r.giant ? '×' + (1 + 0.35 * r.giant).toFixed(2) + ' 王戰' : '未召出'}`);
       await page.close();
     }
   }
