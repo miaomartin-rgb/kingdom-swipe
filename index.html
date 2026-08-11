@@ -259,7 +259,7 @@ const G = {
   siege:null,
   floats:[], parts:[],
   shake:0, flash:0, flashColor:'255,60,60',
-  best:0, tick:0, rank:0
+  best:0, tick:0, rank:0, rankF:0
 };
 
 /* ========== 經濟數值 ==========
@@ -321,7 +321,7 @@ function fmtNum(n){
 
 /* ========== 存檔 ========== */
 const SAVE_KEY = 'kingdom.v1';
-const SAVE_DEFAULTS = { best:0, maxLevel:1, muted:false, runs:0, gold:0, up:null, rank:0 };
+const SAVE_DEFAULTS = { best:0, maxLevel:1, muted:false, runs:0, gold:0, up:null, rankF:0 };
 function loadSave(){
   let s;
   try{ s = Object.assign({}, SAVE_DEFAULTS, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); }
@@ -603,7 +603,7 @@ function updateSiege(dt){
       s.foes.push({
         x: SIEGE.lanes[ri(0, SIEGE.lanes.length - 1)] + rnd(-.35,.35),
         z: G.z + SIEGE.spawnZ + rnd(-5, 5),
-        hp: s.foeHp * rnd(.85,1.15), ph: Math.random() * 6.28
+        hp: s.foeHp * rnd(.85,1.15), ph: Math.random() * 6.28, q: Math.random()
       });
     }
   }
@@ -674,7 +674,9 @@ const FORM_N = CROWD.max;
 const FORM=[];
 for(let i=0;i<FORM_N;i++){
   const r = 0.205*Math.sqrt(i), a = i*2.39996;
-  FORM.push([Math.cos(a)*r, Math.sin(a)*r, Math.random()*6.28]);
+  // q：0.72 依中心距離 + 0.28 隨機，讓換裝有秩序又不會排成整齊的圈
+  const q = Math.min(0.999, 0.72*(i/FORM_N) + 0.28*Math.random());
+  FORM.push([Math.cos(a)*r, Math.sin(a)*r, Math.random()*6.28, q]);
 }
 function crowdRadiusMul(count){
   return count<=130 ? 1 : Math.min(CROWD.radiusCap, Math.pow(count/130, CROWD.radiusExp));
@@ -690,6 +692,22 @@ function tierFor(count){
   let t = 0;
   for(let i=TIER_AT.length-1; i>=0; i--){ if(count >= TIER_AT[i]){ t = i; break; } }
   return t;
+}
+// 連續版本：1.3 代表「大部分是步兵，三成已經升到精銳」。
+// 整團一次換太生硬，用小數才有混編的層次。
+function tierFloat(count){
+  if(count <= TIER_AT[1]) return Math.max(0, count / TIER_AT[1]);
+  for(let i=1; i<TIER_AT.length-1; i++){
+    if(count < TIER_AT[i+1])
+      return i + Math.log(count/TIER_AT[i]) / Math.log(TIER_AT[i+1]/TIER_AT[i]);
+  }
+  return TIER_AT.length - 1;
+}
+// 每個編隊位置的「升遷順位」q：q 越小越早換裝。
+// 由中心往外遞增，所以精銳會集中在隊伍核心，外圍還是舊兵 —— 這就是層次。
+function tierAt(rankF, q, n){
+  const t = Math.floor(rankF + 0.999 - q);
+  return t < 0 ? 0 : (t > n-1 ? n-1 : t);
 }
 // 每階一組配色 + 造型旗標。cape / plume / plate / shield / horn 由 paintUnit 讀取。
 const ALLY_TIERS = [
@@ -720,9 +738,6 @@ FOE_TIERS.forEach((t,i)=>{ t.id = 4 + i; });
 // 每關的兵力都是從 ref(lv) 重新開始（40/60/90…），若直接用當下兵力決定造型，
 // 玩家會在每關開頭掉回民兵、再重新升一次步兵 —— 同一個晉升反覆出現，
 // 而且永遠到不了精銳。改成「歷史最高兵力換到的軍階」，晉升才是單向的獎勵。
-const allyPal = () => ALLY_TIERS[G.rank|0];
-const foePal  = () => FOE_TIERS[G.rank|0];
-const foePalForFight = () => FOE_TIERS[G.rank|0];
 
 /* ---------- 精靈圖：啟動與 resize 時預繪一次 ---------- */
 const SPR = { sizes:[5,8,12,18,26,38,56,82,120], frames:3, cache:null };
@@ -849,9 +864,9 @@ function drawUnit(sx, sy, s, pal, phase, facing){
    小尺寸的精靈貼圖成本與 fillRect 相當，但看起來是人不是柵欄，
    所以整團統一用精靈，不再分色塊層。 */
 const _cbuf = [];   // 重複使用的緩衝，避免每幀配置物件
-for(let i=0;i<FORM_N;i++) _cbuf.push({z:0,x:0,y:0,s:0,f:0});
+for(let i=0;i<FORM_N;i++) _cbuf.push({z:0,x:0,y:0,s:0,f:0,p:null});
 
-function drawCrowd(cxWorld, z, count, pal, facing, spread){
+function drawCrowd(cxWorld, z, count, tiers, facing, spread){
   if(!scaleAt(z)) return;
   const total = Math.max(1, Math.floor(count));
   const n     = Math.min(total, FORM_N);
@@ -860,6 +875,7 @@ function drawCrowd(cxWorld, z, count, pal, facing, spread){
   // 仍然能靠密度看出差別
   const shrink = 1 / (1 + CROWD.shrink * Math.log10(Math.max(1, total/130)));
 
+  const rankF = G.rankF || 0, nt = tiers.length;
   let m = 0;
   for(let i=0;i<n;i++){
     const f = FORM[i];
@@ -867,12 +883,13 @@ function drawCrowd(cxWorld, z, count, pal, facing, spread){
     const ss = scaleAt(zz); if(!ss) continue;
     const u = _cbuf[m++];
     u.z=zz; u.x=px(cxWorld+f[0]*mul, ss); u.y=py(0, ss); u.s=ss*shrink; u.f=f[2];
+    u.p = tiers[tierAt(rankF, f[3], nt)];
   }
   const view = _cbuf.slice(0, m);
   view.sort((a,b)=>b.z-a.z);          // 由遠而近
   for(let i=0;i<m;i++){
     const u = view[i];
-    drawUnit(u.x, u.y, u.s, pal, u.f + G.tick*7, facing);
+    drawUnit(u.x, u.y, u.s, u.p, u.f + G.tick*7, facing);
   }
 }
 
@@ -1017,7 +1034,7 @@ function drawSquad(q){
   if(q.dead) return;
   // 還沒接戰的敵軍，人數依當前兵力即時估算，玩家看到的數字才等於真的會付的代價
   const n = Math.max(1, Math.ceil(q.engaged ? q.count : G.army * q.frac));
-  drawCrowd(0, q.z, n, foePalForFight(), -1, 1);
+  drawCrowd(0, q.z, n, FOE_TIERS, -1, 1);
   const s = scaleAt(q.z); if(!s) return;
   const fs = Math.max(12, s*0.5);
   ctx.font='900 '+fs+'px system-ui,sans-serif';
@@ -1225,10 +1242,13 @@ function update(dt){
   G.x += (G.targetX - G.x) * Math.min(1, dt*11);
 
   // 兵種晉升的當下給一次明確回饋，否則玩家不會注意到自己的兵變了
-  const nowTier = tierFor(G.army);
+  // 連續軍階只升不降，混編比例才會單向往前走
+  const nowF = tierFloat(G.army);
+  if(nowF > G.rankF) G.rankF = nowF;   // 存檔在晉升與關卡結束時寫，不必每幀碰 localStorage
+  const nowTier = Math.floor(G.rankF);
   if(nowTier > (G.rank|0)){
     G.rank = nowTier;
-    saveGame({ rank: nowTier });
+    saveGame({ rankF: G.rankF });
     // 起始 t 為負值 = 延後 0.35 秒才現身。晉升幾乎都發生在通過閘門的同一幀，
     // 直接跳出來會被閘門自己的浮字、粒子、閃光蓋掉，玩家根本看不到。
     G.promo = { name: TIER_NAME[nowTier], t: -0.35 };
@@ -1408,13 +1428,14 @@ function render(){
     else if(it.type==='squad') drawSquad(it);
     else if(it.type==='boss') drawBoss(it);
     else if(it.type==='player'){
-      drawCrowd(G.x, G.z, Math.max(1,Math.floor(G.army)), allyPal(), 1, 1);
+      drawCrowd(G.x, G.z, Math.max(1,Math.floor(G.army)), ALLY_TIERS, 1, 1);
     }
-    else if(it.type==='horde') drawCrowd(0, it.z, 120, foePalForFight(), -1, 3.4);
+    else if(it.type==='horde') drawCrowd(0, it.z, 120, FOE_TIERS, -1, 3.4);
     else if(it.type==='sfoe'){
       // 每個「單位」畫成一小簇，路上才有影片那種黑壓壓的量感（純視覺，不影響數值）
       const f=it.f, s=scaleAt(f.z); if(!s) continue;
-      const ph = f.ph + G.tick*9, fp = foePalForFight();
+      const ph = f.ph + G.tick*9;
+      const fp = FOE_TIERS[tierAt(G.rankF||0, f.q, FOE_TIERS.length)];
       drawUnit(px(f.x-0.62,s), py(0,s), s*0.90, fp, ph+2.1, -1);
       drawUnit(px(f.x+0.62,s), py(0,s), s*0.90, fp, ph+4.2, -1);
       drawUnit(px(f.x,     s), py(0,s), s,      fp, ph,     -1);
@@ -1501,7 +1522,7 @@ function win(){
   G.best=Math.max(G.best,n);
   G.state='result';          // 立刻凍結推進，否則這 700ms 內隊伍會跑出關卡尾端
   const sv = loadSave();
-  saveGame({ best:G.best, maxLevel:Math.max(sv.maxLevel, G.level+1), runs:sv.runs+1 });
+  saveGame({ best:G.best, maxLevel:Math.max(sv.maxLevel, G.level+1), runs:sv.runs+1, rankF:G.rankF });
   lastReward = earnGold(n, G.level);
   Analytics.send('run_end', {result:'win', level:G.level, army:n, gold:lastReward});
   setTimeout(()=>{
@@ -1523,7 +1544,7 @@ function lose(){
   G.army=0;
   burst(G.x,G.z,30,'#ff6b8a'); G.shake=12;
   const sv = loadSave();
-  saveGame({ best:G.best, runs:sv.runs+1 });
+  saveGame({ best:G.best, runs:sv.runs+1, rankF:G.rankF });
   lastReward = earnGold(0, Math.max(0, G.level-1));
   Analytics.send('run_end', {result:'lose', level:G.level, gold:lastReward});
   setTimeout(()=>{
@@ -1645,7 +1666,8 @@ $('startBtn').onclick = ()=>{
 /* ========== 啟動 ========== */
 const saved = loadSave();
 G.best = saved.best;
-G.rank = saved.rank|0;
+G.rankF = saved.rankF || 0;
+G.rank  = Math.floor(G.rankF);
 muted  = saved.muted;
 document.getElementById('mute').textContent = muted ? '✕' : '♪';
 // 上次打到第幾關就從那裡開始，回訪的人不用從頭重來
