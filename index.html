@@ -90,6 +90,57 @@ function resize(){
   CAM_H = wide? 3.5 : 5.6;
   FOCAL = Math.max(210, Math.min(W*0.86, 420));
   buildSky();
+  buildSprites();
+  buildGradients();
+}
+
+/* 只跟畫布尺寸有關的漸層，建一次就好。原本這些每幀都重新配置一個物件。 */
+const GRAD = {};
+function buildGradients(){
+  const g1 = ctx.createLinearGradient(0,HZ,0,H);
+  g1.addColorStop(0,'#1d2a2b'); g1.addColorStop(1,'#0e1618');
+  GRAD.ground = g1;
+  const g2 = ctx.createLinearGradient(0,HZ,0,HZ+H*0.16);
+  g2.addColorStop(0,'rgba(125,58,82,.85)'); g2.addColorStop(1,'rgba(125,58,82,0)');
+  GRAD.fog = g2;
+  const g3 = ctx.createRadialGradient(CX,H*0.55,Math.min(W,H)*0.35,CX,H*0.55,Math.max(W,H)*0.75);
+  g3.addColorStop(0,'rgba(0,0,0,0)'); g3.addColorStop(1,'rgba(0,0,0,.55)');
+  GRAD.vignette = g3;
+  const bw = W*0.5, bx = CX-bw/2;
+  const g4 = ctx.createLinearGradient(bx,0,bx+bw,0);
+  g4.addColorStop(0,'#7de3ff'); g4.addColorStop(1,'#ffd257');
+  GRAD.progress = g4;
+  const hw = W*0.72, hx = CX-hw/2;
+  const g5 = ctx.createLinearGradient(hx,0,hx+hw,0);
+  g5.addColorStop(0,'#ff3d5e'); g5.addColorStop(1,'#ff9d4d');
+  GRAD.bossbar = g5;
+
+  const fs = Math.min(52, W*0.13), yy = H*0.845;
+  const g6 = ctx.createLinearGradient(0,yy-fs/2,0,yy+fs/2);
+  g6.addColorStop(0,'#fff6cf'); g6.addColorStop(1,'#ffc94d');
+  GRAD.armyText = g6;
+
+  // 火把光暈：預繪成一張貼圖，執行期只 drawImage
+  const gl = document.createElement('canvas');
+  gl.width = gl.height = 64;
+  const glg = gl.getContext('2d');
+  const gr = glg.createRadialGradient(32,32,0,32,32,32);
+  gr.addColorStop(0,'rgba(255,180,60,.8)'); gr.addColorStop(1,'rgba(255,140,40,0)');
+  glg.fillStyle = gr; glg.fillRect(0,0,64,64);
+  GRAD.glow = gl;
+
+  // 閘門底色：兩張直條貼圖，拉伸後與原本的漸層一致
+  const strip = (c2,c1) => {
+    const cc = document.createElement('canvas');
+    cc.width = 4; cc.height = 64;
+    const cg = cc.getContext('2d');
+    const lg = cg.createLinearGradient(0,0,0,64);
+    lg.addColorStop(0,c2); lg.addColorStop(1,c1);
+    cg.fillStyle = lg; cg.fillRect(0,0,4,64);
+    return cc;
+  };
+  GRAD.gateGood = strip('rgba(40,180,255,.16)','rgba(70,225,160,.34)');
+  GRAD.gateBad  = strip('rgba(150,20,60,.16)','rgba(240,70,90,.34)');
 }
 window.addEventListener('resize', resize);
 
@@ -351,10 +402,17 @@ window.addEventListener('keydown', e=>{
 function addFloat(text,color,x,z,size){
   G.floats.push({text,color,x,z,t:0,size:size||1});
 }
+// 物件池 + 交換移除：粒子不再每次配置新物件，也不再用 O(n) 的 splice
+const PART_MAX = 260;
+const _partPool = [];
 function burst(x,z,n,color){
   for(let i=0;i<n;i++){
-    G.parts.push({x:x+rnd(-1,1), z:z+rnd(-.8,.8), y:rnd(0.3,1.2),
-      vx:rnd(-1.6,1.6), vy:rnd(2,5.2), vz:rnd(-1,1), t:0, life:rnd(.45,.9), color});
+    if(G.parts.length >= PART_MAX) return;
+    const p = _partPool.pop() || {};
+    p.x=x+rnd(-1,1); p.z=z+rnd(-.8,.8); p.y=rnd(0.3,1.2);
+    p.vx=rnd(-1.6,1.6); p.vy=rnd(2,5.2); p.vz=rnd(-1,1);
+    p.t=0; p.life=rnd(.45,.9); p.color=color;
+    G.parts.push(p);
   }
 }
 
@@ -481,82 +539,134 @@ function endSiege(s){
   }
 }
 
-/* ========== 士兵編隊 ========== */
+/* ========== 士兵編隊 ==========
+   兩件事同時解決：
+   1. 成長要看得見 —— 原本無論兵力多少都只畫 130 個小人，第 2 關之後
+      「變強」就沒有視覺回饋。改成三段 LOD，畫得出來的數量與footprint
+      都隨兵力成長。
+   2. 效能 —— 原本每個士兵約 10 次 canvas 路徑操作（橢圓、圓角矩形、
+      圓弧…）。改成啟動時把士兵預繪成精靈圖，執行期只做 drawImage。 */
+const CROWD = {
+  max       : 240,    // 畫得出來的上限（原本是 130）
+  radiusExp : 0.18,   // footprint = base * (count/130)^radiusExp
+  radiusCap : 1.15,   // 上限，避免整團溢出路面
+  shrink    : 0.34    // 人越多每個畫得越小，密度上升
+};
+const FORM_N = CROWD.max;
 const FORM=[];
-for(let i=0;i<200;i++){
+for(let i=0;i<FORM_N;i++){
   const r = 0.205*Math.sqrt(i), a = i*2.39996;
   FORM.push([Math.cos(a)*r, Math.sin(a)*r, Math.random()*6.28]);
 }
 function crowdRadiusMul(count){
-  return count<=130 ? 1 : Math.min(1.45, Math.pow(count/130, 0.25));
-}
-
-function drawUnit(sx, sy, s, pal, phase, facing){
-  const h = 1.0*s;
-  if(h < 3) { // 太小時簡化
-    ctx.fillStyle = pal.body; ctx.fillRect(sx-1, sy-h, 2.2, h); return;
-  }
-  const w = h*0.40;
-  const bob = Math.sin(phase)*h*0.07;
-  const base = sy;
-  const top = base - h + bob;
-  // 影子
-  ctx.fillStyle='rgba(0,0,0,0.26)';
-  ctx.beginPath(); ctx.ellipse(sx, base, w*0.78, w*0.30, 0,0,6.283); ctx.fill();
-  // 腿
-  ctx.fillStyle = pal.dark;
-  const legH=h*0.26;
-  ctx.fillRect(sx-w*0.42, base-legH, w*0.32, legH);
-  ctx.fillRect(sx+w*0.12, base-legH, w*0.32, legH);
-  // 身體
-  const bodyH = h*0.46;
-  ctx.fillStyle = pal.body;
-  roundRect(sx-w*0.5, base-legH-bodyH+bob, w, bodyH, w*0.28); ctx.fill();
-  // 披風／腰帶
-  ctx.fillStyle = pal.accent;
-  ctx.fillRect(sx-w*0.5, base-legH-bodyH*0.34+bob, w, Math.max(1,h*0.055));
-  // 頭
-  const headR = h*0.155;
-  ctx.fillStyle = pal.skin;
-  ctx.beginPath(); ctx.arc(sx, top+headR*1.35, headR, 0, 6.283); ctx.fill();
-  // 頭盔
-  ctx.fillStyle = pal.metal;
-  ctx.beginPath();
-  ctx.arc(sx, top+headR*1.35, headR*1.12, Math.PI*1.02, Math.PI*2.0);
-  ctx.fill();
-  // 武器
-  if(h>16){
-    ctx.strokeStyle = pal.weapon; ctx.lineWidth = Math.max(1,h*0.05);
-    ctx.beginPath();
-    const wx = sx + facing*w*0.66;
-    ctx.moveTo(wx, base-legH-bodyH*0.15+bob);
-    ctx.lineTo(wx, base-legH-bodyH-h*0.16+bob);
-    ctx.stroke();
-  }
-}
-function roundRect(x,y,w,h,r){
-  ctx.beginPath();
-  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
-  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+  return count<=130 ? 1 : Math.min(CROWD.radiusCap, Math.pow(count/130, CROWD.radiusExp));
 }
 
 const PAL_ALLY = {body:'#3f6fd8', dark:'#26407e', accent:'#ffd257', skin:'#f2c79a', metal:'#cfd6e2', weapon:'#9aa6bb'};
 const PAL_FOE  = {body:'#8f2f3f', dark:'#571b28', accent:'#2a1420', skin:'#7fa05c', metal:'#8b7a66', weapon:'#6d6154'};
 
+/* ---------- 精靈圖：啟動與 resize 時預繪一次 ---------- */
+const SPR = { sizes:[5,8,12,18,26,38,56,82,120], frames:3, cache:null };
+function roundRectOn(g,x,y,w,h,r){
+  g.beginPath();
+  g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r);
+  g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath();
+}
+function roundRect(x,y,w,h,r){ roundRectOn(ctx,x,y,w,h,r); }
+// 原本的向量畫法，現在只在預繪時跑
+function paintUnit(g, sx, sy, s, pal, phase, facing){
+  const h = 1.0*s, w = h*0.40;
+  const bob = Math.sin(phase)*h*0.07;
+  const base = sy, top = base - h + bob;
+  g.fillStyle='rgba(0,0,0,0.26)';
+  g.beginPath(); g.ellipse(sx, base, w*0.78, w*0.30, 0,0,6.283); g.fill();
+  g.fillStyle = pal.dark;
+  const legH=h*0.26;
+  g.fillRect(sx-w*0.42, base-legH, w*0.32, legH);
+  g.fillRect(sx+w*0.12, base-legH, w*0.32, legH);
+  const bodyH = h*0.46;
+  g.fillStyle = pal.body;
+  roundRectOn(g, sx-w*0.5, base-legH-bodyH+bob, w, bodyH, w*0.28); g.fill();
+  g.fillStyle = pal.accent;
+  g.fillRect(sx-w*0.5, base-legH-bodyH*0.34+bob, w, Math.max(1,h*0.055));
+  const headR = h*0.155;
+  g.fillStyle = pal.skin;
+  g.beginPath(); g.arc(sx, top+headR*1.35, headR, 0, 6.283); g.fill();
+  g.fillStyle = pal.metal;
+  g.beginPath(); g.arc(sx, top+headR*1.35, headR*1.12, Math.PI*1.02, Math.PI*2.0); g.fill();
+  if(h>16){
+    g.strokeStyle = pal.weapon; g.lineWidth = Math.max(1,h*0.05);
+    g.beginPath();
+    const wx = sx + facing*w*0.66;
+    g.moveTo(wx, base-legH-bodyH*0.15+bob);
+    g.lineTo(wx, base-legH-bodyH-h*0.16+bob);
+    g.stroke();
+  }
+}
+function buildSprites(){
+  SPR.cache = {};
+  const pals = [['a',PAL_ALLY],['f',PAL_FOE]];
+  for(const [pk,pal] of pals){
+    for(const facing of [1,-1]){
+      for(let fi=0; fi<SPR.frames; fi++){
+        for(const size of SPR.sizes){
+          const w = Math.ceil(size*0.72), h = Math.ceil(size*1.40), baseY = size*1.26;
+          const c = document.createElement('canvas');
+          c.width = Math.max(1,Math.ceil(w*DPR)); c.height = Math.max(1,Math.ceil(h*DPR));
+          const g = c.getContext('2d');
+          g.setTransform(DPR,0,0,DPR,0,0);
+          paintUnit(g, w/2, baseY, size, pal, fi/SPR.frames*6.283, facing);
+          SPR.cache[pk+(facing>0?'r':'l')+fi+'_'+size] = {c, w, h, baseY, size};
+        }
+      }
+    }
+  }
+}
+function spriteFor(pal, facing, frame, s){
+  const sizes = SPR.sizes;
+  let size = sizes[sizes.length-1];
+  for(let i=0;i<sizes.length;i++){ if(sizes[i] >= s){ size = sizes[i]; break; } }
+  return SPR.cache[(pal===PAL_ALLY?'a':'f')+(facing>0?'r':'l')+frame+'_'+size];
+}
+// 對外介面不變，內部改成貼圖
+function drawUnit(sx, sy, s, pal, phase, facing){
+  if(s < 3){ ctx.fillStyle = pal.body; ctx.fillRect(sx-1, sy-s, 2.2, s); return; }
+  const frame = ((phase*0.4777)|0) % SPR.frames;   // phase -> 0..2 的走路影格
+  const sp = spriteFor(pal, facing, frame < 0 ? 0 : frame, s);
+  if(!sp){ ctx.fillStyle = pal.body; ctx.fillRect(sx-1, sy-s, 2.2, s); return; }
+  const k = s / sp.size;
+  ctx.drawImage(sp.c, sx - sp.w*0.5*k, sy - sp.baseY*k, sp.w*k, sp.h*k);
+}
+
+/* ---------- 由遠而近繪製 ----------
+   小尺寸的精靈貼圖成本與 fillRect 相當，但看起來是人不是柵欄，
+   所以整團統一用精靈，不再分色塊層。 */
+const _cbuf = [];   // 重複使用的緩衝，避免每幀配置物件
+for(let i=0;i<FORM_N;i++) _cbuf.push({z:0,x:0,y:0,s:0,f:0});
+
 function drawCrowd(cxWorld, z, count, pal, facing, spread){
-  const s = scaleAt(z); if(!s) return;
-  const n = Math.min(count, 130);
-  const mul = crowdRadiusMul(count) * (spread||1);
-  const list=[];
+  if(!scaleAt(z)) return;
+  const total = Math.max(1, Math.floor(count));
+  const n     = Math.min(total, FORM_N);
+  const mul   = crowdRadiusMul(total) * (spread||1);
+  // 人越多，每個畫得越小 → 同樣的地面塞進更多人，超過繪製上限之後
+  // 仍然能靠密度看出差別
+  const shrink = 1 / (1 + CROWD.shrink * Math.log10(Math.max(1, total/130)));
+
+  let m = 0;
   for(let i=0;i<n;i++){
     const f = FORM[i];
-    const ox = f[0]*mul, oz = f[1]*mul*0.75;
-    const zz = z + oz;
+    const zz = z + f[1]*mul*0.75;
     const ss = scaleAt(zz); if(!ss) continue;
-    list.push([zz, px(cxWorld+ox, ss), py(0, ss), ss, f[2]]);
+    const u = _cbuf[m++];
+    u.z=zz; u.x=px(cxWorld+f[0]*mul, ss); u.y=py(0, ss); u.s=ss*shrink; u.f=f[2];
   }
-  list.sort((a,b)=>b[0]-a[0]);
-  for(const u of list) drawUnit(u[1], u[2], u[3], pal, u[4] + G.tick*7, facing);
+  const view = _cbuf.slice(0, m);
+  view.sort((a,b)=>b.z-a.z);          // 由遠而近
+  for(let i=0;i<m;i++){
+    const u = view[i];
+    drawUnit(u.x, u.y, u.s, pal, u.f + G.tick*7, facing);
+  }
 }
 
 /* ========== 天空 ========== */
@@ -599,9 +709,7 @@ function buildSky(){
 /* ========== 場景 ========== */
 function drawGround(){
   // 草地
-  const gg = ctx.createLinearGradient(0,HZ,0,H);
-  gg.addColorStop(0,'#1d2a2b'); gg.addColorStop(1,'#0e1618');
-  ctx.fillStyle=gg; ctx.fillRect(0,HZ,W,H-HZ);
+  ctx.fillStyle=GRAD.ground; ctx.fillRect(0,HZ,W,H-HZ);
   // 道路
   const far = camZ + 70, near = camZ + 1.0;
   const sF = scaleAt(far), sN = scaleAt(near);
@@ -639,9 +747,7 @@ function drawGround(){
   ctx.beginPath();
   ctx.moveTo(px(0,sF),py(0,sF)); ctx.lineTo(px(0,sN),py(0,sN)); ctx.stroke();
   // 霧
-  const fg=ctx.createLinearGradient(0,HZ,0,HZ+H*0.16);
-  fg.addColorStop(0,'rgba(125,58,82,.85)'); fg.addColorStop(1,'rgba(125,58,82,0)');
-  ctx.fillStyle=fg; ctx.fillRect(0,HZ,W,H*0.16);
+  ctx.fillStyle=GRAD.fog; ctx.fillRect(0,HZ,W,H*0.16);
 }
 
 function opLabel(o){
@@ -663,10 +769,7 @@ function drawGate(g){
     const good = opGood(op);
     const c1 = good? 'rgba(70,225,160,.34)' : 'rgba(240,70,90,.34)';
     const c2 = good? 'rgba(40,180,255,.16)' : 'rgba(150,20,60,.16)';
-    const grad = ctx.createLinearGradient(0,yTop,0,yBot);
-    grad.addColorStop(0,c2); grad.addColorStop(1,c1);
-    ctx.fillStyle=grad;
-    ctx.fillRect(x0, yTop, x1-x0, yBot-yTop);
+    ctx.drawImage(good ? GRAD.gateGood : GRAD.gateBad, x0, yTop, x1-x0, yBot-yTop);
     ctx.strokeStyle = good? 'rgba(110,255,190,.85)':'rgba(255,110,130,.85)';
     ctx.lineWidth = Math.max(1.5, s*0.035);
     ctx.strokeRect(x0, yTop, x1-x0, yBot-yTop);
@@ -698,9 +801,8 @@ function drawDeco(d){
   // 火把光
   const r = Math.max(2, s*0.22);
   const fy = base-h;
-  const g2 = ctx.createRadialGradient(x,fy,0,x,fy,r*3);
-  g2.addColorStop(0,'rgba(255,180,60,.8)'); g2.addColorStop(1,'rgba(255,140,40,0)');
-  ctx.fillStyle=g2; ctx.beginPath(); ctx.arc(x,fy,r*3,0,6.283); ctx.fill();
+  const R = r*3;
+  ctx.drawImage(GRAD.glow, x-R, fy-R, R*2, R*2);
   ctx.fillStyle='#ffd98a'; ctx.beginPath(); ctx.arc(x,fy,r*0.7,0,6.283); ctx.fill();
 }
 
@@ -831,9 +933,7 @@ function drawHUD(){
   ctx.fillStyle='rgba(0,0,0,.45)';
   roundRect(bx,by,bw,bh,bh/2); ctx.fill();
   const p = Math.max(0,Math.min(1, G.z/G.length));
-  const pg=ctx.createLinearGradient(bx,0,bx+bw,0);
-  pg.addColorStop(0,'#7de3ff'); pg.addColorStop(1,'#ffd257');
-  ctx.fillStyle=pg; roundRect(bx,by,Math.max(bh,bw*p),bh,bh/2); ctx.fill();
+  ctx.fillStyle=GRAD.progress; roundRect(bx,by,Math.max(bh,bw*p),bh,bh/2); ctx.fill();
   // 王旗標記
   ctx.fillStyle='#ff6b8a'; ctx.font='900 12px system-ui'; ctx.textAlign='center';
   ctx.textBaseline='bottom'; ctx.fillText('☠', bx+bw, by-2);
@@ -851,9 +951,7 @@ function drawHUD(){
   const txt = fmtNum(n);
   ctx.lineWidth=fs*0.16; ctx.strokeStyle='rgba(0,0,0,.75)';
   ctx.strokeText(txt, CX, yy);
-  const tg = ctx.createLinearGradient(0,yy-fs/2,0,yy+fs/2);
-  tg.addColorStop(0,'#fff6cf'); tg.addColorStop(1,'#ffc94d');
-  ctx.fillStyle=tg; ctx.fillText(txt, CX, yy);
+  ctx.fillStyle=GRAD.armyText; ctx.fillText(txt, CX, yy);
   ctx.font='700 12px system-ui'; ctx.fillStyle='rgba(255,255,255,.6)';
   ctx.fillText('兵力', CX, yy+fs*0.62);
 
@@ -876,9 +974,7 @@ function drawHUD(){
     const hw=W*0.72, hx=CX-hw/2, hy=top+34, hh=16;
     ctx.fillStyle='rgba(0,0,0,.55)'; roundRect(hx,hy,hw,hh,8); ctx.fill();
     const r = Math.max(0, G.boss.hp/G.boss.max);
-    const hg=ctx.createLinearGradient(hx,0,hx+hw,0);
-    hg.addColorStop(0,'#ff3d5e'); hg.addColorStop(1,'#ff9d4d');
-    ctx.fillStyle=hg; roundRect(hx,hy,Math.max(4,hw*r),hh,8); ctx.fill();
+    ctx.fillStyle=GRAD.bossbar; roundRect(hx,hy,Math.max(4,hw*r),hh,8); ctx.fill();
     ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.lineWidth=1.5;
     roundRect(hx,hy,hw,hh,8); ctx.stroke();
     ctx.font='800 12px system-ui'; ctx.fillStyle='#fff'; ctx.textAlign='center';
@@ -1006,7 +1102,10 @@ function update(dt){
   for(let i=G.parts.length-1;i>=0;i--){
     const p=G.parts[i]; p.t+=dt;
     p.x+=p.vx*dt; p.z+=p.vz*dt; p.y+=p.vy*dt; p.vy-=9*dt;
-    if(p.t>p.life) G.parts.splice(i,1);
+    if(p.t>p.life){
+      G.parts[i] = G.parts[G.parts.length-1]; G.parts.pop();
+      if(_partPool.length < PART_MAX) _partPool.push(p);
+    }
   }
   if(G.shake>0) G.shake=Math.max(0,G.shake-dt*22);
   if(G.flash>0) G.flash=Math.max(0,G.flash-dt*1.6);
@@ -1102,9 +1201,7 @@ function render(){
     ctx.fillRect(0,0,W,H);
   }
   // 暗角
-  const vg=ctx.createRadialGradient(CX,H*0.55,Math.min(W,H)*0.35,CX,H*0.55,Math.max(W,H)*0.75);
-  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,.55)');
-  ctx.fillStyle=vg; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=GRAD.vignette; ctx.fillRect(0,0,W,H);
 
   if(G.state==='play') drawHUD();
 }
