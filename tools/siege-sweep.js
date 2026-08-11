@@ -16,9 +16,10 @@
  */
 'use strict';
 
+// 巨人召集只出現在 BAL.siegeEvery 的倍數關，所以測試關卡必須是 5 的倍數
 const CASES = [
   // [進場兵力, 關卡]
-  [150, 1], [560, 3], [1550, 4], [3300, 6],
+  [600, 5], [2260, 5], [8000, 10], [24000, 10],
 ];
 
 const CHROME_CANDIDATES = [
@@ -46,6 +47,10 @@ async function main() {
     for (const dodge of [0, 1]) {
       const page = await ctx.newPage();
       await page.goto(url, { waitUntil: 'networkidle' });
+      // 讓遊戲直接從測試關卡開始，那一關才會有巨人召集
+      await page.evaluate((lv) => localStorage.setItem('kingdom.v1', JSON.stringify(
+        { best: 1, maxLevel: lv, muted: true, runs: 1, gold: 0, up: {}, rankF: 0, giant: null })), lv);
+      await page.reload({ waitUntil: 'networkidle' });
       await page.click('#startBtn');
 
       const r = await page.evaluate(({ army0, lv, dodge }) => new Promise(res => {
@@ -57,14 +62,14 @@ async function main() {
         for (const o of G.objs) { if (o.type === 'gate') o.used = true; if (o.type === 'squad') o.dead = true; }
 
         // 會走位的玩家：把火力對準射程內人最多的那一排
-        // 你隔著隔牆平射，站在左道的 -L 就正對右道的 L
+        // 站到哪就打到哪：移過去攔住人最多的那一排
         const ai = setInterval(() => {
           if (!G.siege) return;
-          if (!dodge) { G.targetX = -2.1; return; }   // 不走位＝停在兩排之間
-          let best = -1, bx = -3.0;
-          for (const L of [1.4, 2.8, 4.2]) {
+          if (!dodge) { G.targetX = -1.6; return; }   // 不走位＝停在原地
+          let best = -1, bx = -1.6;
+          for (const L of [1.0, 2.3, 3.6]) {
             const n = G.siege.foes.filter(f => Math.abs(f.x - L) < 1.3 && f.z - G.z < 25).length;
-            if (n > best) { best = n; bx = -L; }
+            if (n > best) { best = n; bx = L; }
           }
           G.targetX = bx;
         }, 60);

@@ -239,8 +239,8 @@ const SIEGE = {
   hpLv        : 0.10,
   volley      : 0.14,
   dmgPerArmy  : 0.5,
-  columnHalf  : 1.9,    // 主要火力覆蓋的橫向寬度 → 對準哪一排是唯一的技巧
-  strayMul    : 0.5,
+  columnHalf  : 2.2,    // 主要火力覆蓋的橫向寬度 → 對準哪一排是唯一的技巧
+  strayMul    : 0.60,   // 沒對準也不是全無輸出，只是效率差
   focusFoes   : 3,
   tracerMax   : 40,
   foeSpeed    : 7.2,
@@ -248,15 +248,13 @@ const SIEGE = {
   setback     : 1.0,    // 每漏一個，組裝進度倒退幾個擊殺（鐵甲會減免）
   spawnZ      : 36,
   hordeZ      : 32,
-  roadHalf    : 6.0,    // 這一段的橋面寬度（平時是 4.6）
-  wallHalf    : 0.34,   // 中央隔牆的半寬
-  wallH       : 0.95,   // 隔牆高度
-  crowdSpread : 0.60,   // 隊伍縮成一團，才塞得進左道
-  playerLane  : [-4.8, -1.2],   // 你只能在左道移動
-  lanes       : [1.4, 2.8, 4.2],// 敵人縱隊走右道
-  giantZ      : 11,     // 巨人組裝的位置（左道前方）
-  giantX      : -3.0,
-  giantScale  : 6.0,    // 巨人身高 = 一般士兵的幾倍
+  roadHalf    : 5.2,    // 這一段的橋面寬度（平時是 4.6）
+  crowdSpread : 0.68,   // 隊伍縮一點，走位才靈活
+  lanes       : [1.0, 2.3, 3.6],// 敵人縱隊走右側三排
+  startX      : -1.6,   // 開場刻意不在任何一排上，要主動去攔
+  giantZ      : 8,      // 巨人組裝的位置（左前方）
+  giantX      : -2.7,
+  giantScale  : 2.2,    // 巨人身高 = 一般士兵的幾倍
   minBuild    : 0.5,    // 組裝到這個比例以上才召得出來
   bossMul     : 0.35,   // 巨人加成：王戰傷害 +bossMul*power
   tollMul     : 0.30    // 巨人加成：雜兵團損耗 -tollMul*power
@@ -519,10 +517,7 @@ cv.addEventListener('pointerdown', e=>{
   cv.setPointerCapture && cv.setPointerCapture(e.pointerId);
   resumeAudio();
 });
-function clampX(x){
-  if(G.siege) return Math.max(SIEGE.playerLane[0], Math.min(SIEGE.playerLane[1], x));
-  return Math.max(-RH+0.5, Math.min(RH-0.5, x));
-}
+function clampX(x){ return Math.max(-RH+0.5, Math.min(RH-0.5, x)); }
 cv.addEventListener('pointermove', e=>{
   if(!dragging || G.state!=='play') return;
   const d = screenToRoad(e.clientX) - dragStartScreen;
@@ -571,8 +566,8 @@ function startSiege(o){
   G.giant = null;          // 重新召集，舊的巨人退場
   G.siege = o;
   RH = SIEGE.roadHalf;
-  // 開場落在兩排敵人之間，不主動瞄準就只有半效 —— 站位必須是主動決定
-  G.targetX = -2.1;
+  // 開場刻意不在任何一排上，不主動去攔就只有半效
+  G.targetX = SIEGE.startX;
   addFloat('召集巨人！','#ffe9a8', -2.2, G.z + 3, 1.15);
   beep(150,.35,'sawtooth',.07);
 }
@@ -583,9 +578,9 @@ function siegeVolley(s, lineZ){
   // 主火力只覆蓋正前方一欄；欄內沒目標就打最近的，但效率打折
   const inRange = s.foes.filter(f => f.z - lineZ < SIEGE.rangeZ);
   if(!inRange.length) return;
-  // 你隔著隔牆平射過去，所以站在左道哪個位置就正對右道哪一排。
-  // 站位仍然是唯一的技巧來源，只是幾何從「正前方」變成「對面」。
-  const aim = -G.x;
+  // 站到哪就打到哪。原本用隔牆鏡射，但玩家的直覺是「移過去擋住牠們」，
+  // 被牆擋住只會覺得卡住，所以改成直接攔截。
+  const aim = G.x;
   let pool = inRange.filter(f => Math.abs(f.x - aim) < SIEGE.columnHalf);
   let mul = 1;
   if(!pool.length){ pool = inRange.slice(); mul = SIEGE.strayMul; }
@@ -1133,31 +1128,6 @@ function drawBoss(b){
 }
 
 /* ========== 王國要塞（進度物件化，取代進度條） ========== */
-// 中央隔牆：把路面縱向切成「你的左道」與「敵人的右道」
-function drawLaneWall(){
-  const far = camZ + 62, near = camZ + 1.0;
-  const sF = scaleAt(far), sN = scaleAt(near);
-  if(!sF || !sN) return;
-  const hw = SIEGE.wallHalf, hh = SIEGE.wallH;
-  // 側面
-  ctx.fillStyle = '#2a2338';
-  ctx.beginPath();
-  ctx.moveTo(px(-hw,sF), py(hh,sF)); ctx.lineTo(px(-hw,sN), py(hh,sN));
-  ctx.lineTo(px(-hw,sN), py(0,sN));  ctx.lineTo(px(-hw,sF), py(0,sF));
-  ctx.closePath(); ctx.fill();
-  // 頂面
-  ctx.fillStyle = '#4a4064';
-  ctx.beginPath();
-  ctx.moveTo(px(-hw,sF), py(hh,sF)); ctx.lineTo(px(hw,sF), py(hh,sF));
-  ctx.lineTo(px(hw,sN), py(hh,sN));  ctx.lineTo(px(-hw,sN), py(hh,sN));
-  ctx.closePath(); ctx.fill();
-  // 頂緣打光，遠看才分得出兩道
-  ctx.strokeStyle = 'rgba(255,214,130,.85)'; ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(px(-hw,sF), py(hh,sF)); ctx.lineTo(px(-hw,sN), py(hh,sN));
-  ctx.stroke();
-}
-
 // 巨人：組裝中是半透明線稿，由下往上填實；完成後跟著隊伍走
 const _giantBuf = { c:null, ghost:null, size:0 };
 function giantCanvas(size){
@@ -1477,7 +1447,6 @@ function render(){
   // 天空
   if(skyCanvas) ctx.drawImage(skyCanvas,0,0,W,HZ+2);
   drawGround();
-  if(G.siege) drawLaneWall();
 
   // 收集可繪物件（由遠而近）
   const items=[];
@@ -1514,7 +1483,7 @@ function render(){
     }
     else if(it.type==='giant'){
       if(G.siege) drawGiant(SIEGE.giantX, it.z, 1, Math.min(1, G.siege.killed / G.siege.quota));
-      else drawGiant(G.x - 2.6, it.z, 1, 1);
+      else drawGiant(G.x, it.z, 1, 1);   // 加入後站隊伍正中間
     }
     else if(it.type==='horde') drawCrowd(3.0, it.z, 120, FOE_TIERS, -1, 1.5);
     else if(it.type==='sfoe'){
