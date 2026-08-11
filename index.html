@@ -302,6 +302,10 @@ const BAL = {
   bossDmgExp : 0.85,     // 次線性：多帶有用，但邊際遞減
   // 血量對齊「設計上的期望兵力」，而不是玩家當下的兵力 ——
   // 這是關鍵差別：關卡決定難度，玩家的累積決定他打得多輕鬆。
+  speedBase  : 10,
+  speedStep  : 1.05,   // 每關 ×1.05
+  speedCap   : 16,     // 上限。閘門間距 15，速度 16 時只剩約 0.94 秒可以比較兩邊
+  speed      : lv => Math.min(BAL.speedCap, BAL.speedBase * Math.pow(BAL.speedStep, lv-1)),
   bossHp     : lv => Math.round(BAL.bossDmgC *
                        Math.pow(BAL.expect(lv), BAL.bossDmgExp) * BAL.bossSecs)
 };
@@ -371,10 +375,13 @@ const Analytics = {
 /* ========== 獎勵式影片 ==========
    佈點依市場建議放在摩擦點：失敗畫面、結算、出征前。
    這裡是 stub —— 介面固定，之後接 Poki / CrazyGames SDK 只要換 provider。 */
+// 還沒接任何廣告平台，所以整組佈點關閉，玩家看不到按鈕。
+// 之後拿到帳號時把這個改成 true 並注入 provider 即可，其餘程式碼不用動。
+const ADS_ENABLED = false;
 const Ads = {
   provider: null,     // 之後注入 {rewarded: () => Promise<boolean>}
   shown: 0,
-  available(){ return this.shown < 3; },   // 單場 3 次上限，符合短 session 的建議值
+  available(){ return ADS_ENABLED && this.shown < 3; },  // 單場 3 次上限
   rewarded(placement){
     Analytics.send('ad_offer', {placement});
     if(!this.available()) return Promise.resolve(false);
@@ -459,6 +466,7 @@ function buildLevel(lv){
 
 function startLevel(lv, carry){
   G.level = lv;
+  G.speed = BAL.speed(lv);
   // 每關從 ref 重新開始，殘兵只換成有上限的獎勵
   G.army = Math.round((BAL.ref(lv) + (carry
     ? Math.min(Math.round(carry * BAL.carryBonus), Math.round(BAL.carryCapMul * BAL.ref(lv)))
@@ -468,6 +476,7 @@ function startLevel(lv, carry){
   G.objs = L.objs; G.length = L.length;
   G.combat=null; G.bossFight=false; G.siege=null; G.floats=[]; G.parts=[];
   G.checkpointArmy = G.army;
+  G.tier = tierFor(G.army);
   reviveUsed = false;
   Analytics.send('run_start', {level:lv, army:G.army, up:loadSave().up});
   G.shake=0; G.flash=0;
@@ -670,8 +679,46 @@ function crowdRadiusMul(count){
   return count<=130 ? 1 : Math.min(CROWD.radiusCap, Math.pow(count/130, CROWD.radiusExp));
 }
 
-const PAL_ALLY = {body:'#3f6fd8', dark:'#26407e', accent:'#ffd257', skin:'#f2c79a', metal:'#cfd6e2', weapon:'#9aa6bb'};
-const PAL_FOE  = {body:'#8f2f3f', dark:'#571b28', accent:'#2a1420', skin:'#7fa05c', metal:'#8b7a66', weapon:'#6d6154'};
+/* ---------- 兵種階級 ----------
+   兵力變多時，士兵本身也要升級 —— 光是「更多一樣的小人」到後面就麻痺了。
+   門檻對齊實際的兵力曲線（第 8 關約 1.2 萬），不是隨手抓的整數，
+   否則最高階會永遠看不到。敵人用同一個尺度跟著升級，雙方一起變壯。 */
+const TIER_AT = [0, 250, 1200, 5000];
+const TIER_NAME = ['民兵','步兵','精銳','騎士'];
+function tierFor(count){
+  let t = 0;
+  for(let i=TIER_AT.length-1; i>=0; i--){ if(count >= TIER_AT[i]){ t = i; break; } }
+  return t;
+}
+// 每階一組配色 + 造型旗標。cape / plume / plate / shield / horn 由 paintUnit 讀取。
+const ALLY_TIERS = [
+  {key:'a0', body:'#5d6b8a', dark:'#3a4459', accent:'#8b7f5e', skin:'#f2c79a',
+   metal:'#98a1ae', weapon:'#8a7a63', helm:false, weap:false},
+  {key:'a1', body:'#3f6fd8', dark:'#26407e', accent:'#ffd257', skin:'#f2c79a',
+   metal:'#cfd6e2', weapon:'#9aa6bb', helm:true,  weap:true},
+  {key:'a2', body:'#3a5fd0', dark:'#1f3573', accent:'#ffd257', skin:'#f2c79a',
+   metal:'#e6edf9', weapon:'#dfe6f2', helm:true,  weap:true, cape:'#b8324e', plume:'#ffd257'},
+  {key:'a3', body:'#c9d2e0', dark:'#7a8598', accent:'#ffd257', skin:'#f2c79a',
+   metal:'#f2f6ff', weapon:'#ffe9a8', helm:true,  weap:true, cape:'#7a3fd0', plume:'#ff5f7a',
+   plate:true, shield:'#ffd257'}
+];
+const FOE_TIERS = [
+  {key:'f0', body:'#6b4a3a', dark:'#42291f', accent:'#2a1a12', skin:'#93a86a',
+   metal:'#7d6a54', weapon:'#5e5344', helm:false, weap:false},
+  {key:'f1', body:'#8f2f3f', dark:'#571b28', accent:'#2a1420', skin:'#7fa05c',
+   metal:'#8b7a66', weapon:'#6d6154', helm:true,  weap:true},
+  {key:'f2', body:'#a3213f', dark:'#5e0f22', accent:'#ffb03a', skin:'#6d9350',
+   metal:'#b09070', weapon:'#c98a4a', helm:true,  weap:true, cape:'#3d0f1c', horn:'#e6dcc4'},
+  {key:'f3', body:'#5c1f6b', dark:'#320f3c', accent:'#ff6bd0', skin:'#5f8a48',
+   metal:'#c6a8e0', weapon:'#ff9de0', helm:true,  weap:true, cape:'#1d0824', horn:'#f2e6ff',
+   plate:true}
+];
+ALLY_TIERS.forEach((t,i)=>{ t.id = i; });
+FOE_TIERS.forEach((t,i)=>{ t.id = 4 + i; });
+const allyPal = count => ALLY_TIERS[tierFor(count)];
+const foePal  = count => FOE_TIERS[tierFor(count)];
+// 敵人跟著玩家的兵力一起升級，雙方視覺同步
+const foePalForFight = () => foePal(G.army);
 
 /* ---------- 精靈圖：啟動與 resize 時預繪一次 ---------- */
 const SPR = { sizes:[5,8,12,18,26,38,56,82,120], frames:3, cache:null };
@@ -681,28 +728,79 @@ function roundRectOn(g,x,y,w,h,r){
   g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath();
 }
 function roundRect(x,y,w,h,r){ roundRectOn(ctx,x,y,w,h,r); }
-// 原本的向量畫法，現在只在預繪時跑
+// 原本的向量畫法，現在只在預繪時跑。pal 上的旗標決定這一階多畫什麼。
 function paintUnit(g, sx, sy, s, pal, phase, facing){
   const h = 1.0*s, w = h*0.40;
   const bob = Math.sin(phase)*h*0.07;
   const base = sy, top = base - h + bob;
+  const legH = h*0.26, bodyH = h*0.46;
+  const headR = h*0.155, headY = top + headR*1.35;
+
   g.fillStyle='rgba(0,0,0,0.26)';
   g.beginPath(); g.ellipse(sx, base, w*0.78, w*0.30, 0,0,6.283); g.fill();
+
+  // 披風畫在身體後面
+  if(pal.cape && h > 10){
+    g.fillStyle = pal.cape;
+    g.beginPath();
+    g.moveTo(sx-w*0.46, base-legH-bodyH*0.92+bob);
+    g.lineTo(sx+w*0.46, base-legH-bodyH*0.92+bob);
+    g.lineTo(sx+w*0.72, base-legH*0.15+bob);
+    g.lineTo(sx-w*0.72, base-legH*0.15+bob);
+    g.closePath(); g.fill();
+  }
+
   g.fillStyle = pal.dark;
-  const legH=h*0.26;
   g.fillRect(sx-w*0.42, base-legH, w*0.32, legH);
   g.fillRect(sx+w*0.12, base-legH, w*0.32, legH);
-  const bodyH = h*0.46;
-  g.fillStyle = pal.body;
+
+  // 板甲階級的身體用金屬色，並多一條胸甲高光
+  g.fillStyle = pal.plate ? pal.metal : pal.body;
   roundRectOn(g, sx-w*0.5, base-legH-bodyH+bob, w, bodyH, w*0.28); g.fill();
+  if(pal.plate && h > 12){
+    g.fillStyle = 'rgba(255,255,255,.28)';
+    g.fillRect(sx-w*0.34, base-legH-bodyH*0.86+bob, w*0.18, bodyH*0.62);
+  }
   g.fillStyle = pal.accent;
   g.fillRect(sx-w*0.5, base-legH-bodyH*0.34+bob, w, Math.max(1,h*0.055));
-  const headR = h*0.155;
+
   g.fillStyle = pal.skin;
-  g.beginPath(); g.arc(sx, top+headR*1.35, headR, 0, 6.283); g.fill();
-  g.fillStyle = pal.metal;
-  g.beginPath(); g.arc(sx, top+headR*1.35, headR*1.12, Math.PI*1.02, Math.PI*2.0); g.fill();
-  if(h>16){
+  g.beginPath(); g.arc(sx, headY, headR, 0, 6.283); g.fill();
+
+  if(pal.helm){
+    g.fillStyle = pal.metal;
+    g.beginPath(); g.arc(sx, headY, headR*1.12, Math.PI*1.02, Math.PI*2.0); g.fill();
+  }
+  // 盔纓：一眼就分得出精銳與騎士
+  if(pal.plume && h > 12){
+    g.fillStyle = pal.plume;
+    g.beginPath();
+    g.moveTo(sx-headR*0.30, headY-headR*0.95);
+    g.lineTo(sx+headR*0.30, headY-headR*0.95);
+    g.lineTo(sx+headR*0.10, headY-headR*2.15);
+    g.lineTo(sx-headR*0.55, headY-headR*1.75);
+    g.closePath(); g.fill();
+  }
+  // 魔物的角
+  if(pal.horn && h > 10){
+    g.fillStyle = pal.horn;
+    for(const dir of [-1, 1]){
+      g.beginPath();
+      g.moveTo(sx + dir*headR*0.55, headY - headR*0.45);
+      g.lineTo(sx + dir*headR*1.30, headY - headR*1.75);
+      g.lineTo(sx + dir*headR*0.30, headY - headR*1.05);
+      g.closePath(); g.fill();
+    }
+  }
+  // 盾牌畫在持武器的另一側
+  if(pal.shield && h > 14){
+    g.fillStyle = pal.shield;
+    const shx = sx - facing*w*0.62;
+    roundRectOn(g, shx-w*0.20, base-legH-bodyH*0.86+bob, w*0.40, bodyH*0.78, w*0.14); g.fill();
+    g.fillStyle = 'rgba(0,0,0,.22)';
+    g.fillRect(shx-w*0.05, base-legH-bodyH*0.80+bob, w*0.10, bodyH*0.66);
+  }
+  if(pal.weap && h > 16){
     g.strokeStyle = pal.weapon; g.lineWidth = Math.max(1,h*0.05);
     g.beginPath();
     const wx = sx + facing*w*0.66;
@@ -711,30 +809,27 @@ function paintUnit(g, sx, sy, s, pal, phase, facing){
     g.stroke();
   }
 }
-function buildSprites(){
-  SPR.cache = {};
-  const pals = [['a',PAL_ALLY],['f',PAL_FOE]];
-  for(const [pk,pal] of pals){
-    for(const facing of [1,-1]){
-      for(let fi=0; fi<SPR.frames; fi++){
-        for(const size of SPR.sizes){
-          const w = Math.ceil(size*0.72), h = Math.ceil(size*1.40), baseY = size*1.26;
-          const c = document.createElement('canvas');
-          c.width = Math.max(1,Math.ceil(w*DPR)); c.height = Math.max(1,Math.ceil(h*DPR));
-          const g = c.getContext('2d');
-          g.setTransform(DPR,0,0,DPR,0,0);
-          paintUnit(g, w/2, baseY, size, pal, fi/SPR.frames*6.283, facing);
-          SPR.cache[pk+(facing>0?'r':'l')+fi+'_'+size] = {c, w, h, baseY, size};
-        }
-      }
-    }
-  }
+// 改成用到才畫：4 階 × 2 陣營 × 2 朝向 × 3 影格 × 9 尺寸 = 432 張，
+// 一次全建太浪費，實際一場只會用到其中一兩階
+function buildSprites(){ SPR.cache = new Array(8*2*SPR.frames*SPR.sizes.length); }
+function makeSprite(pal, facing, frame, size){
+  const w = Math.ceil(size*0.72), h = Math.ceil(size*1.40), baseY = size*1.26;
+  const c = document.createElement('canvas');
+  c.width = Math.max(1,Math.ceil(w*DPR)); c.height = Math.max(1,Math.ceil(h*DPR));
+  const g = c.getContext('2d');
+  g.setTransform(DPR,0,0,DPR,0,0);
+  paintUnit(g, w/2, baseY, size, pal, frame/SPR.frames*6.283, facing);
+  return {c, w, h, baseY, size};
 }
 function spriteFor(pal, facing, frame, s){
   const sizes = SPR.sizes;
-  let size = sizes[sizes.length-1];
-  for(let i=0;i<sizes.length;i++){ if(sizes[i] >= s){ size = sizes[i]; break; } }
-  return SPR.cache[(pal===PAL_ALLY?'a':'f')+(facing>0?'r':'l')+frame+'_'+size];
+  let si = sizes.length-1;
+  for(let i=0;i<sizes.length;i++){ if(sizes[i] >= s){ si = i; break; } }
+  // 純數字索引，避免每次呼叫都組一個字串當 key
+  const idx = ((pal.id*2 + (facing>0?0:1))*SPR.frames + frame)*sizes.length + si;
+  let sp = SPR.cache[idx];
+  if(!sp) sp = SPR.cache[idx] = makeSprite(pal, facing, frame, sizes[si]);
+  return sp;
 }
 // 對外介面不變，內部改成貼圖
 function drawUnit(sx, sy, s, pal, phase, facing){
@@ -918,7 +1013,7 @@ function drawSquad(q){
   if(q.dead) return;
   // 還沒接戰的敵軍，人數依當前兵力即時估算，玩家看到的數字才等於真的會付的代價
   const n = Math.max(1, Math.ceil(q.engaged ? q.count : G.army * q.frac));
-  drawCrowd(0, q.z, n, PAL_FOE, -1, 1);
+  drawCrowd(0, q.z, n, foePalForFight(), -1, 1);
   const s = scaleAt(q.z); if(!s) return;
   const fs = Math.max(12, s*0.5);
   ctx.font='900 '+fs+'px system-ui,sans-serif';
@@ -1060,8 +1155,8 @@ function drawHUD(){
   ctx.lineWidth=fs*0.16; ctx.strokeStyle='rgba(0,0,0,.75)';
   ctx.strokeText(txt, CX, yy);
   ctx.fillStyle=GRAD.armyText; ctx.fillText(txt, CX, yy);
-  ctx.font='700 12px system-ui'; ctx.fillStyle='rgba(255,255,255,.6)';
-  ctx.fillText('兵力', CX, yy+fs*0.62);
+  ctx.font='800 12px system-ui'; ctx.fillStyle='rgba(255,255,255,.62)';
+  ctx.fillText(TIER_NAME[tierFor(n)]+' · 兵力', CX, yy+fs*0.62);
 
   // 城牆防守倒數
   if(G.siege){
@@ -1100,6 +1195,17 @@ function update(dt){
   // 橫向移動（戰鬥時自動回到中路；城牆防守時保留操控，走位是玩法的一部分）
   if(G.combat || G.bossFight) G.targetX += (0 - G.targetX) * Math.min(1, dt*7);
   G.x += (G.targetX - G.x) * Math.min(1, dt*11);
+
+  // 兵種晉升的當下給一次明確回饋，否則玩家不會注意到自己的兵變了
+  const nowTier = tierFor(G.army);
+  if(nowTier > (G.tier|0)){
+    G.tier = nowTier;
+    addFloat('晉升 · '+TIER_NAME[nowTier], '#ffe9a8', G.x, G.z+2.2, 1.35);
+    burst(G.x, G.z, 30, '#ffd257');
+    G.flash = 0.32; G.flashColor = '255,220,120';
+    beep(720,.18,'triangle',.07); setTimeout(()=>beep(980,.22,'triangle',.07), 130);
+    Analytics.send('tier_up', {tier:nowTier, name:TIER_NAME[nowTier], army:Math.round(G.army)});
+  } else if(nowTier < (G.tier|0)) G.tier = nowTier;
 
   const frozen = !!G.combat || G.bossFight || !!G.siege;
   if(!frozen){
@@ -1262,15 +1368,18 @@ function render(){
     else if(it.type==='gate') drawGate(it);
     else if(it.type==='squad') drawSquad(it);
     else if(it.type==='boss') drawBoss(it);
-    else if(it.type==='player') drawCrowd(G.x, G.z, Math.max(1,Math.floor(G.army)), PAL_ALLY, 1, 1);
-    else if(it.type==='horde') drawCrowd(0, it.z, 120, PAL_FOE, -1, 3.4);
+    else if(it.type==='player'){
+      const n = Math.max(1, Math.floor(G.army));
+      drawCrowd(G.x, G.z, n, allyPal(n), 1, 1);
+    }
+    else if(it.type==='horde') drawCrowd(0, it.z, 120, foePalForFight(), -1, 3.4);
     else if(it.type==='sfoe'){
       // 每個「單位」畫成一小簇，路上才有影片那種黑壓壓的量感（純視覺，不影響數值）
       const f=it.f, s=scaleAt(f.z); if(!s) continue;
-      const ph = f.ph + G.tick*9;
-      drawUnit(px(f.x-0.62,s), py(0,s), s*0.90, PAL_FOE, ph+2.1, -1);
-      drawUnit(px(f.x+0.62,s), py(0,s), s*0.90, PAL_FOE, ph+4.2, -1);
-      drawUnit(px(f.x,     s), py(0,s), s,      PAL_FOE, ph,     -1);
+      const ph = f.ph + G.tick*9, fp = foePalForFight();
+      drawUnit(px(f.x-0.62,s), py(0,s), s*0.90, fp, ph+2.1, -1);
+      drawUnit(px(f.x+0.62,s), py(0,s), s*0.90, fp, ph+4.2, -1);
+      drawUnit(px(f.x,     s), py(0,s), s,      fp, ph,     -1);
     }
     else if(it.type==='trace'){
       const t=it.t, s0=scaleAt(t.z0), s1=scaleAt(t.z1); if(!s0||!s1) continue;
