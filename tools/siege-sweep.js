@@ -31,7 +31,7 @@ async function main() {
   catch { console.error('需要 playwright：npm i playwright'); process.exit(1); }
 
   const path = require('path');
-  const url = 'file://' + path.resolve(__dirname, '..', 'index.html');
+  const url = 'file://' + path.resolve(__dirname, '..', 'index.html') + '?debug=1';
   const executablePath = CHROME_CANDIDATES.find(p => p && require('fs').existsSync(p));
 
   const browser = await chromium.launch(executablePath ? { executablePath } : {});

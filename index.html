@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>王國遠征 · 左滑右滑</title>
+<meta name="description" content="帶著你的騎士穿越暗影之地，挑對每一道門，把兵力滾大，擊倒盡頭的魔物。">
+<meta name="theme-color" content="#0a0810">
+<meta property="og:type" content="website">
+<meta property="og:title" content="王國遠征 · 左滑右滑">
+<meta property="og:description" content="挑對每一道門，把兵力滾大，擊倒盡頭的魔物。">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230a0810'/%3E%3Cpath d='M14 46V26l8-8 10 8 10-8 8 8v20z' fill='%23f0b342'/%3E%3C/svg%3E">
 <style>
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   html,body{width:100%;height:100%;overflow:hidden;background:#0a0810;
@@ -39,6 +47,23 @@
     font-size:15px;font-weight:700;letter-spacing:.05em;opacity:.9;z-index:4;
     text-shadow:0 2px 10px #000;animation:pulse 1.6s infinite;pointer-events:none;}
   @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+  .btn+.btn{margin-top:12px;}
+  .reward{margin-top:12px;font-size:15px;color:#7dffc0;font-weight:700;min-height:22px;}
+  .gold{margin:10px 0 4px;font-size:20px;font-weight:900;color:#ffd257;letter-spacing:.04em;}
+  #upList{margin-top:12px;display:flex;flex-direction:column;gap:8px;}
+  .up{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;
+    background:rgba(255,255,255,.05);border:1px solid rgba(255,215,130,.18);text-align:left;}
+  .up-info{flex:1;min-width:0;}
+  .up-name{font-size:14px;font-weight:800;color:#f2ecff;}
+  .up-desc{font-size:11.5px;color:#9d95c0;margin-top:2px;}
+  .up-pips{display:flex;gap:3px;margin-top:5px;}
+  .up-pip{width:12px;height:4px;border-radius:2px;background:rgba(255,255,255,.16);}
+  .up-pip.on{background:#ffd257;}
+  .up-buy{flex:none;border:none;border-radius:999px;padding:9px 13px;font-size:13px;font-weight:800;
+    color:#3a2405;background:linear-gradient(180deg,#ffe07a,#eeab2c);cursor:pointer;
+    box-shadow:0 4px 0 #8a5c13;white-space:nowrap;}
+  .up-buy:disabled{background:#3b3557;color:#7d76a3;box-shadow:0 4px 0 #262142;cursor:default;}
+  .up-buy.max{background:#2f4a3d;color:#7dffc0;box-shadow:0 4px 0 #1d2f27;}
 </style>
 </head>
 <body>
@@ -52,8 +77,8 @@
       <div class="title">王國遠征</div>
       <div class="sub">你是光輝王國最後的統帥。<br>帶著你的騎士穿越暗影之地，<br>擊倒盤據在盡頭的魔物。</div>
       <div class="sub" style="color:#ffd98a;margin-top:16px;">👉 按住畫面左右拖曳<br>挑選能讓兵力變多的那道門</div>
-      <div class="sub" style="margin-top:12px;">途中會遇到「城牆防守」：<br>對準敵人最多的那一排集中火力，<br>把王國要塞蓋起來。</div>
       <button class="btn" id="startBtn">出征</button>
+      <button class="btn ghost" id="menuUpBtn">王國升級</button>
       <div class="hint">支援手機觸控 ／ 鍵盤左右鍵</div>
     </div>
   </div>
@@ -65,8 +90,20 @@
       <div class="big" id="resTitle">勝利！</div>
       <div class="sub" id="resDesc"></div>
       <div class="stat" id="resStat"></div>
+      <div class="reward" id="resReward"></div>
+      <button class="btn hidden" id="adDoubleBtn">📺 金幣加倍</button>
       <button class="btn" id="nextBtn">繼續</button>
+      <button class="btn ghost" id="upBtn">王國升級</button>
       <button class="btn ghost" id="retryBtn">重新開始</button>
+    </div>
+  </div>
+
+  <div id="upgrade" class="layer hidden">
+    <div class="panel">
+      <div class="big" style="font-size:24px">王國升級</div>
+      <div class="gold" id="upGold">🪙 0</div>
+      <div id="upList"></div>
+      <button class="btn" id="upCloseBtn">回去出征</button>
     </div>
   </div>
 </div>
@@ -280,16 +317,77 @@ function fmtNum(n){
 
 /* ========== 存檔 ========== */
 const SAVE_KEY = 'kingdom.v1';
-const SAVE_DEFAULTS = { best:0, maxLevel:1, muted:false, runs:0 };
+const SAVE_DEFAULTS = { best:0, maxLevel:1, muted:false, runs:0, gold:0, up:null };
 function loadSave(){
-  try{ return Object.assign({}, SAVE_DEFAULTS, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); }
-  catch(e){ return Object.assign({}, SAVE_DEFAULTS); }   // 無痕模式／配額滿時安靜退回預設
+  let s;
+  try{ s = Object.assign({}, SAVE_DEFAULTS, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); }
+  catch(e){ s = Object.assign({}, SAVE_DEFAULTS); }   // 無痕模式／配額滿時安靜退回預設
+  s.up = Object.assign({}, UP_DEFAULTS, s.up || {});
+  return s;
 }
 function saveGame(patch){
   const next = Object.assign(loadSave(), patch);
   try{ localStorage.setItem(SAVE_KEY, JSON.stringify(next)); }catch(e){}
   return next;
 }
+
+/* ========== 永久升級（meta 層） ==========
+   市場資料：玩家通常在第 3–5 次 session 需要碰到進度或解鎖系統，
+   否則 D1 之後沒有回來的理由。這是最小可行的一組，刻意只有四條線。 */
+const UPGRADES = [
+  { key:'army',  name:'徵兵令',   desc:'每關起始兵力 +6%',        max:8, cost:40,  step:1.75 },
+  { key:'armor', name:'鐵甲',     desc:'雜兵團與防守損耗 −4%',    max:8, cost:55,  step:1.80 },
+  { key:'power', name:'攻城槌',   desc:'王戰傷害 +7%',            max:8, cost:50,  step:1.78 },
+  { key:'greed', name:'戰利品袋', desc:'金幣產出 +12%',           max:8, cost:45,  step:1.70 }
+];
+const UP_DEFAULTS = {};
+for(const u of UPGRADES) UP_DEFAULTS[u.key] = 0;
+
+function upLevel(key){ return (loadSave().up||UP_DEFAULTS)[key] || 0; }
+function upCost(u, lv){ return Math.round(u.cost * Math.pow(u.step, lv)); }
+// 遊戲內即時查詢的乘數
+const MUL = {
+  start : ()=> 1 + 0.06*upLevel('army'),
+  loss  : ()=> 1 - 0.04*upLevel('armor'),
+  boss  : ()=> 1 + 0.07*upLevel('power'),
+  gold  : ()=> 1 + 0.12*upLevel('greed')
+};
+
+/* ========== 數據埋點 ==========
+   先寫成統一介面，之後接哪一家（GA4 / Firebase / 通路自帶）只要換 sink。
+   沒有這些事件，後面所有調校都是猜測。 */
+const DEBUG = /[?&]debug=1/.test(location.search);
+const Analytics = {
+  queue: [],
+  send(name, props){
+    const ev = Object.assign({ t: Math.round(performance.now()), name }, props||{});
+    this.queue.push(ev);
+    if(this.queue.length > 400) this.queue.shift();
+    if(DEBUG) console.log('[analytics]', name, props||'');
+    // 真實 sink 之後接在這裡（window.gtag / 通路 SDK）
+  }
+};
+
+/* ========== 獎勵式影片 ==========
+   佈點依市場建議放在摩擦點：失敗畫面、結算、出征前。
+   這裡是 stub —— 介面固定，之後接 Poki / CrazyGames SDK 只要換 provider。 */
+const Ads = {
+  provider: null,     // 之後注入 {rewarded: () => Promise<boolean>}
+  shown: 0,
+  available(){ return this.shown < 3; },   // 單場 3 次上限，符合短 session 的建議值
+  rewarded(placement){
+    Analytics.send('ad_offer', {placement});
+    if(!this.available()) return Promise.resolve(false);
+    Analytics.send('ad_start', {placement});
+    const done = this.provider
+      ? this.provider.rewarded(placement)
+      : Promise.resolve(true);          // 沒接 SDK 時直接給獎勵，方便本地測試
+    return Promise.resolve(done).then(ok=>{
+      if(ok){ this.shown++; Analytics.send('ad_complete', {placement}); }
+      return ok;
+    });
+  }
+};
 
 /* ========== 關卡生成 ========== */
 function rnd(a,b){ return a + Math.random()*(b-a); }
@@ -334,7 +432,13 @@ function buildLevel(lv){
   const stages = 5 + Math.min(4, lv-1);
   const budget = { mul: BAL.mulMax(lv) };
   for(let i=0;i<stages;i++){
-    objs.push(makeGate(z, lv, budget)); z += 15;
+    let g = makeGate(z, lv, budget);
+    // 第一關的第一道門：兩邊都是好處，先給一次無條件的成功再開始考人
+    if(lv===1 && i===0){
+      g.left  = {op:'x', val:2};
+      g.right = {op:'+', val: Math.max(12, Math.round(BAL.ref(1)*0.7))};
+    }
+    objs.push(g); z += 15;
     if(i%2===1 || i===stages-1){ objs.push(makeSquad(z, lv, i)); z += 13; }
   }
   // 城牆防守插曲：閘門跑完、王戰之前
@@ -356,13 +460,16 @@ function buildLevel(lv){
 function startLevel(lv, carry){
   G.level = lv;
   // 每關從 ref 重新開始，殘兵只換成有上限的獎勵
-  G.army = BAL.ref(lv) + (carry
+  G.army = Math.round((BAL.ref(lv) + (carry
     ? Math.min(Math.round(carry * BAL.carryBonus), Math.round(BAL.carryCapMul * BAL.ref(lv)))
-    : 0);
+    : 0)) * MUL.start());
   G.x=0; G.targetX=0; G.z=0; camZ = -PLAYER_DZ;
   const L = buildLevel(lv);
   G.objs = L.objs; G.length = L.length;
   G.combat=null; G.bossFight=false; G.siege=null; G.floats=[]; G.parts=[];
+  G.checkpointArmy = G.army;
+  reviveUsed = false;
+  Analytics.send('run_start', {level:lv, army:G.army, up:loadSave().up});
   G.shake=0; G.flash=0;
   G.state='play';
   document.getElementById('menu').classList.add('hidden');
@@ -424,10 +531,11 @@ function startSiege(o){
   o.dmgAcc = 0; o.volleyN = 0; o.volleyAcc = 0; o.spawnAcc = 0;
   o.foes = []; o.tracers = [];
   o.army0 = Math.max(1, G.army);
+  G.checkpointArmy = G.army;
   o.quota = SIEGE.quotaBase + SIEGE.quotaLv * (G.level - 1);
   o.foeHp = Math.max(6, SIEGE.hpC * Math.pow(o.army0, SIEGE.hpExp) *
                         (1 + SIEGE.hpLv * (G.level - 1)));
-  o.leak  = Math.max(1, o.army0 * SIEGE.leakCost);
+  o.leak  = Math.max(1, o.army0 * SIEGE.leakCost * MUL.loss());
   G.siege = o;
   addFloat('守住陣線！','#ffe9a8', 0, G.z + 3, 1.15);
   beep(150,.35,'sawtooth',.07);
@@ -1013,6 +1121,11 @@ function update(dt){
       G.army = Math.max(0, G.army);
       const diff = G.army - before;
       const good = diff>=0;
+      Analytics.send('gate_choice', {
+        level:G.level, before, after:G.army,
+        picked:(G.x<0?'L':'R'),
+        l:opLabel(o.left), r:opLabel(o.right)
+      });
       addFloat((good?'+':'-')+fmtNum(Math.abs(diff)), good?'#7dffc0':'#ff7d92', G.x, G.z+1.2, 1.25);
       burst(G.x, G.z, good?14:10, good?'#7dffc0':'#ff6b8a');
       beep(good?660:180, .12, good?'triangle':'sawtooth', .06);
@@ -1026,7 +1139,7 @@ function update(dt){
     for(const o of G.objs){
       if(o.type==='squad' && !o.dead && G.z >= o.z-2.2){
         // 敵軍人數在遭遇的當下才決定，讓畫面上的數字與實際損耗一致
-        G.combat = o; o.engaged=true;
+        G.combat = o; o.engaged=true; G.checkpointArmy = G.army;
         o.start = Math.max(4, Math.round(G.army * o.frac));
         o.count = o.start;
         addFloat('衝鋒！','#ffe9a8', 0, o.z-1.2, 0.95);
@@ -1041,7 +1154,7 @@ function update(dt){
   if(G.combat){
     const q=G.combat;
     if(q.toll === undefined){
-      q.toll = G.army * q.frac;      // 這場要付出的兵力 = 當前兵力 × 比例
+      q.toll = G.army * q.frac * MUL.loss();   // 當前兵力 × 比例 × 鐵甲減免
       q.paid = 0;
       q.dur  = Math.max(0.5, Math.min(1.5, q.frac * 7));
     }
@@ -1073,6 +1186,7 @@ function update(dt){
   if(b && !b.dead && !G.combat && G.z >= b.z-6.2){
     if(!G.bossFight){
       G.bossFight=true;
+      G.checkpointArmy = G.army;
       // 血量只由關卡決定。原本會被重設成 army*12，等於宣告前面所有選門無效。
       b.max = b.base;
       b.hp = b.max;
@@ -1081,7 +1195,7 @@ function update(dt){
   }
   if(G.bossFight && b && !b.dead){
     b.swing += dt;
-    b.hp -= Math.pow(Math.max(0,G.army), BAL.bossDmgExp) * BAL.bossDmgC * dt;
+    b.hp -= Math.pow(Math.max(0,G.army), BAL.bossDmgExp) * BAL.bossDmgC * MUL.boss() * dt;
     G.army -= (G.army * b.dps + 2) * dt;
     G.shake = 3.5;
     if(Math.random()<dt*20) burst(rnd(-2,2), b.z-1.6, 2, '#ff9d4d');
@@ -1215,41 +1329,168 @@ function loop(now){
 }
 
 /* ========== 結果 ========== */
+const $ = id => document.getElementById(id);
+let pendingNext = null, lastReward = 0, reviveUsed = false;
+
 function showResult(title, desc, stat, nextLabel){
   G.state='result';
-  document.getElementById('resTitle').textContent=title;
-  document.getElementById('resDesc').innerHTML=desc;
-  document.getElementById('resStat').textContent=stat;
-  document.getElementById('nextBtn').textContent=nextLabel;
-  document.getElementById('result').classList.remove('hidden');
-  document.getElementById('swipeHint').classList.add('hidden');
+  $('resTitle').textContent=title;
+  $('resDesc').innerHTML=desc;
+  $('resStat').textContent=stat;
+  $('nextBtn').textContent=nextLabel;
+  $('result').classList.remove('hidden');
+  $('swipeHint').classList.add('hidden');
 }
+// 金幣：殘存兵力 + 關卡獎金，再乘上「戰利品袋」
+function earnGold(survivors, level){
+  const g = Math.max(1, Math.round((survivors*0.35 + level*22) * MUL.gold()));
+  saveGame({ gold: loadSave().gold + g });
+  return g;
+}
+function setReward(text){ $('resReward').textContent = text || ''; }
+
 function win(){
   const n=Math.floor(G.army);
   G.best=Math.max(G.best,n);
   G.state='result';          // 立刻凍結推進，否則這 700ms 內隊伍會跑出關卡尾端
-  saveGame({ best:G.best, maxLevel:Math.max(loadSave().maxLevel, G.level+1), runs:loadSave().runs+1 });
+  const sv = loadSave();
+  saveGame({ best:G.best, maxLevel:Math.max(sv.maxLevel, G.level+1), runs:sv.runs+1 });
+  lastReward = earnGold(n, G.level);
+  Analytics.send('run_end', {result:'win', level:G.level, army:n, gold:lastReward});
   setTimeout(()=>{
     showResult('⚔️ 王國得勝','你擊倒了 <b>'+G.boss.name+'</b><br>暗影之地又退了一步。',
       '殘存兵力：'+fmtNum(n)+' ／ 最高紀錄：'+fmtNum(G.best), '前往第 '+(G.level+1)+' 關');
+    setReward('🪙 +'+lastReward);
+    // 正向情緒下的曝光，接受率最高，且不影響沒看廣告的玩家
+    showAdButton('double', '📺 金幣加倍 +'+lastReward);
     pendingNext = ()=> startLevel(G.level+1, n);
   }, 700);
 }
 function lose(){
   G.state='result';
+  const fell = Math.max(0, Math.floor(G.checkpointArmy||0));
+  Analytics.send('level_fail', {
+    level:G.level, at: G.siege ? 'siege' : (G.bossFight ? 'boss' : (G.combat ? 'squad' : 'gate')),
+    z: Math.round(G.z), army: fell
+  });
   G.army=0;
   burst(G.x,G.z,30,'#ff6b8a'); G.shake=12;
-  saveGame({ best:G.best, runs:loadSave().runs+1 });
+  const sv = loadSave();
+  saveGame({ best:G.best, runs:sv.runs+1 });
+  lastReward = earnGold(0, Math.max(0, G.level-1));
+  Analytics.send('run_end', {result:'lose', level:G.level, gold:lastReward});
   setTimeout(()=>{
     showResult('💀 全軍覆沒','你的騎士倒在了第 '+G.level+' 關。<br>下次記得比較一下兩道門的數字。',
       '最高紀錄：'+fmtNum(G.best)+' 兵力', '再挑戰一次');
+    setReward('🪙 +'+lastReward);
+    // 失敗畫面是流失最集中的位置，也是市場資料指名該放復活的位置
+    if(!reviveUsed && fell > 0)
+      showAdButton('revive', '📺 以 '+fmtNum(Math.max(BAL.ref(G.level), Math.round(fell*0.6)))+' 兵力續戰');
+    else showAdButton(null);
     pendingNext = ()=> startLevel(G.level, 0);
   }, 500);
 }
-let pendingNext=null;
-document.getElementById('nextBtn').onclick = ()=>{ if(pendingNext) pendingNext(); };
-document.getElementById('retryBtn').onclick = ()=>{ G.best=Math.max(G.best,Math.floor(G.army)); startLevel(1,0); };
-document.getElementById('startBtn').onclick = ()=>{
+
+/* ---------- 獎勵式影片按鈕 ---------- */
+let adAction = null;
+function showAdButton(kind, label){
+  const btn = $('adDoubleBtn');
+  if(!kind || !Ads.available()){ btn.classList.add('hidden'); adAction = null; return; }
+  btn.classList.remove('hidden');
+  btn.textContent = label;
+  adAction = kind;
+}
+$('adDoubleBtn').onclick = ()=>{
+  const kind = adAction; if(!kind) return;
+  $('adDoubleBtn').disabled = true;
+  Ads.rewarded(kind).then(ok=>{
+    $('adDoubleBtn').disabled = false;
+    if(!ok){ showAdButton(null); return; }
+    if(kind === 'double'){
+      saveGame({ gold: loadSave().gold + lastReward });
+      setReward('🪙 +'+(lastReward*2)+'（已加倍）');
+      showAdButton(null);
+    }else if(kind === 'revive'){
+      reviveUsed = true;
+      const back = Math.max(BAL.ref(G.level), Math.round((G.checkpointArmy||0)*0.6));
+      showAdButton(null);
+      $('result').classList.add('hidden');
+      resumeFromRevive(back);
+    }
+  });
+};
+// 原地續戰。刻意「不」重置王的血量 —— 從頭再打一次的話，
+// 這支廣告等於沒有價值；保留已造成的傷害才是真的第二次機會。
+function resumeFromRevive(army){
+  G.army = army;
+  G.combat = null; G.siege = null;
+  G.z = Math.max(0, G.z - 4);
+  for(const o of G.objs){
+    if(o.type==='squad' && !o.dead && o.z > G.z){ o.engaged=false; o.toll=undefined; }
+    if(o.type==='siege' && !o.done && o.z > G.z){ o.done = true; }  // 防守戰不重來
+  }
+  G.state='play';
+  Analytics.send('revive', {level:G.level, army, bossHp: G.boss ? Math.round(G.boss.hp) : null});
+  addFloat('援軍抵達！','#7dffc0', G.x, G.z+2, 1.2);
+  G.flash = .35; G.flashColor = '120,255,190';
+}
+
+/* ---------- 升級面板 ---------- */
+function renderUpgrades(){
+  const sv = loadSave();
+  $('upGold').textContent = '🪙 '+fmtNum(sv.gold);
+  const list = $('upList');
+  list.innerHTML = '';
+  for(const u of UPGRADES){
+    const lv = sv.up[u.key]|0;
+    const maxed = lv >= u.max;
+    const cost = upCost(u, lv);
+    const row = document.createElement('div');
+    row.className = 'up';
+    const pips = Array.from({length:u.max}, (_,i)=>
+      '<span class="up-pip'+(i<lv?' on':'')+'"></span>').join('');
+    row.innerHTML =
+      '<div class="up-info"><div class="up-name">'+u.name+' <span style="color:#ffd257">Lv.'+lv+'</span></div>'+
+      '<div class="up-desc">'+u.desc+'</div><div class="up-pips">'+pips+'</div></div>';
+    const btn = document.createElement('button');
+    btn.className = 'up-buy' + (maxed?' max':'');
+    btn.textContent = maxed ? '已滿' : '🪙 '+cost;
+    btn.disabled = maxed || sv.gold < cost;
+    btn.onclick = ()=>{
+      const cur = loadSave();
+      const l = cur.up[u.key]|0;
+      const c = upCost(u, l);
+      if(l >= u.max || cur.gold < c) return;
+      cur.up[u.key] = l+1;
+      saveGame({ gold: cur.gold - c, up: cur.up });
+      Analytics.send('upgrade_buy', {key:u.key, level:l+1, cost:c});
+      beep(880,.12,'triangle',.06);
+      renderUpgrades();
+    };
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+}
+function openUpgrades(from){
+  renderUpgrades();
+  $('upgrade').classList.remove('hidden');
+  $('menu').classList.add('hidden');
+  $('result').classList.add('hidden');
+  upgradeFrom = from;
+  Analytics.send('upgrade_open', {from});
+}
+let upgradeFrom = 'menu';
+$('upCloseBtn').onclick = ()=>{
+  $('upgrade').classList.add('hidden');
+  if(upgradeFrom === 'result') $('result').classList.remove('hidden');
+  else $('menu').classList.remove('hidden');
+};
+$('upBtn').onclick   = ()=> openUpgrades('result');
+$('menuUpBtn').onclick = ()=> openUpgrades('menu');
+
+$('nextBtn').onclick = ()=>{ if(pendingNext) pendingNext(); };
+$('retryBtn').onclick = ()=>{ G.best=Math.max(G.best,Math.floor(G.army)); startLevel(1,0); };
+$('startBtn').onclick = ()=>{
   resumeAudio();
   startLevel(startAtLevel, 0);
 };
@@ -1268,7 +1509,8 @@ if(saved.best > 0){
 }
 resize();
 requestAnimationFrame(loop);
-window.__game = G; // 測試用
+// 只在 ?debug=1 時對外暴露，避免上架後被直接改分數
+if(DEBUG){ window.__game = G; window.__analytics = Analytics; }
 })();
 </script>
 </body>

@@ -1,0 +1,15 @@
+{
+  "name": "王國遠征 · 左滑右滑",
+  "short_name": "王國遠征",
+  "description": "帶著你的騎士穿越暗影之地，挑對每一道門，把兵力滾大，擊倒盡頭的魔物。",
+  "start_url": ".",
+  "scope": ".",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0a0810",
+  "theme_color": "#0a0810",
+  "icons": [
+    { "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%230a0810'/%3E%3Cpath d='M112 368V208l64-64 80 64 80-64 64 64v160z' fill='%23f0b342'/%3E%3C/svg%3E",
+      "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

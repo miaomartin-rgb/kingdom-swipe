@@ -20,7 +20,11 @@ node tools/balance-sim.js
 並在 summary 裡貼出前後對照。不要只靠手感描述。
 
 ## 專案現況
-- `index.html` — 遊戲本體，單檔，尚未重構。數值集中在 `BAL` 與 `SIEGE` 兩個常數區塊
+- `index.html` — 遊戲本體，單檔，尚未重構。數值集中在 `BAL`、`SIEGE`、`CROWD`、
+  `UPGRADES` 幾個常數區塊
+- `manifest.webmanifest` — PWA 設定
+- 除錯：網址加 `?debug=1` 才會掛上 `window.__game` 與 `window.__analytics`，
+  所有測試腳本都要帶這個參數
 - `docs/architecture-review.html` — 架構檢視與升級建議（2026-08-10）
 - `tools/balance-sim.js` — 閘門／雜兵團／王戰模擬器，固定種子 20260810。
   裡面的 `BAL` 必須與 index.html 同步
