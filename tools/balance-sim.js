@@ -46,7 +46,11 @@ const BAL = {
   divChance: 0.35,
   divVal: 2,
   subLo: 0.25, subHi: 0.45,
-  squadLo: 0.09, squadHi: 0.16,
+  // 雜兵團改成射擊戰後，損耗是位置相依的，這裡不能再用公式硬算。
+  // 下面兩個係數是 tools/squad-sweep.js 實測回填的：
+  //   有瞄準  lv1 10.0% / lv6 14.6%
+  //   沒瞄準  lv1 13.1% / lv6 17.6%
+  squadBase: 0.095, squadLvStep: 0.010, squadMissMul: 1.28,
   expectTable: [110, 278, 421, 1163, 1712, 2501, 5769, 9015],
   expect: lv => lv <= BAL.expectTable.length
             ? BAL.expectTable[lv-1]
@@ -89,8 +93,11 @@ function applyOp(army, o) {
   if (o.op === 'x') return Math.floor(army * o.val);
   return Math.floor(army / o.val);
 }
-function squadFrac(i) {
-  return Math.min(0.42, rnd(BAL.squadLo, BAL.squadHi) * (0.85 + 0.10 * i));
+// skill 1 = 每次都對準，0 = 從不移動
+function squadFrac(lv, skill) {
+  const aimed = BAL.squadBase + BAL.squadLvStep * (lv - 1);
+  const miss = aimed * BAL.squadMissMul;
+  return (aimed + (miss - aimed) * (1 - skill)) * rnd(0.88, 1.12);
 }
 const stagesFor = lv => 5 + Math.min(4, lv - 1);
 
@@ -129,7 +136,7 @@ function runLevel(lv, army, skill) {
                                 : (random() < 0.5 ? ra : rb));
     if (i % 2 === 1 || i === stages - 1) {
       const before = army;
-      army = resolveSquad(army, squadFrac(i));
+      army = resolveSquad(army, squadFrac(lv, skill));
       drain += before - army;
     }
     if (army <= 0) return { army: 0, drain };
