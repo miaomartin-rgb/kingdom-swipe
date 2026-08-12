@@ -116,8 +116,12 @@
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 let W=0,H=0,DPR=1,CX=0,HZ=0;
+/* 算圖解析度上限。人群改成混編＋放大之後填色面積漲了五成，DPR 2 在中階
+   手機（2x 節流）只剩 21fps。壓到 1.5 可以回到 34fps —— 比重做之前的 27
+   還快。這一版的美術是大塊平塗，1.5 和 2 幾乎看不出差別（實測截圖比對）。 */
+let DPR_CAP = 1.5;
 function resize(){
-  DPR = Math.min(window.devicePixelRatio||1, 2);
+  DPR = Math.min(window.devicePixelRatio||1, DPR_CAP);
   W = cv.clientWidth; H = cv.clientHeight;
   cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
   ctx.setTransform(DPR,0,0,DPR,0,0);
@@ -275,7 +279,7 @@ const G = {
   siege:null, giant:null,
   floats:[], parts:[],
   shake:0, flash:0, flashColor:'255,60,60',
-  best:0, tick:0, rank:0
+  best:0, tick:0, rank:0, champs:0
 };
 
 /* ========== 經濟數值 ==========
@@ -525,8 +529,11 @@ function startLevel(lv, carry){
   RH = ROAD_HALF;
   G.checkpointArmy = G.army;
   G.promo = null;   // 巨人刻意不在這裡清掉 —— 它要陪你打完接下來幾關
-  // 軍階在一輪之內只升不降；重開一輪要歸零，否則晉升橫幅一輩子只出現一次
-  if(!carry) G.rank = 0;
+  // 軍階在一輪之內只升不降；重開一輪要跟開局兵力對齊而不是歸零 ——
+  // 開局的 40 兵力本來就在步兵階，歸零的話第一幀就會跳一個假的晉升橫幅。
+  if(!carry) G.rank = tierFor(G.army);
+  // 融合兵同理：直接對齊，開場才不會放一次沒來由的融合特效
+  G.champs = champCount(G.army);
   reviveUsed = false;
   Analytics.send('run_start', {level:lv, army:G.army, up:loadSave().up});
   G.shake=0; G.flash=0;
@@ -732,7 +739,10 @@ function endSiege(s){
    2. 效能 —— 原本每個士兵約 10 次 canvas 路徑操作（橢圓、圓角矩形、
       圓弧…）。改成啟動時把士兵預繪成精靈圖，執行期只做 drawImage。 */
 const CROWD = {
-  max       : 240,    // 畫得出來的上限（原本是 130）
+  // 上限從 240 收到 170：混編之後每隻平均放大到 1.4 倍，填色面積是平方成長，
+  // 240 隻配上放大後量到 4x 節流下只剩 6.7fps。170 隻把面積壓回七成，
+  // 份量成長仍有 ×8（見 tools/crowd-check.js）。
+  max       : 170,
   radiusExp : 0.18,   // footprint = base * (count/130)^radiusExp
   radiusCap : 1.15,   // 上限，避免整團溢出路面
   shrink    : 0.34    // 人越多每個畫得越小，密度上升
@@ -751,58 +761,63 @@ function crowdRadiusMul(count){
 
 /* ---------- 兵種階級 ----------
    兵力變多時，士兵本身也要升級 —— 光是「更多一樣的小人」到後面就麻痺了。
-   門檻對齊實際的兵力曲線（第 8 關約 1.2 萬），不是隨手抓的整數，
-   否則最高階會永遠看不到。敵人用同一個尺度跟著升級，雙方一起變壯。 */
-/* 升級是「合併」不是「換裝」：MERGE 個低階兵併成 1 個高階兵。
-   所以兵力數字變大時，畫面上的人數反而會縮減成少數精銳 ——
-   這同時解決了繪製上限的問題：不管兵力多大，單位數永遠是可控的。 */
-const MERGE = 30;                       // 幾個低階併成一個高階
-const TIER_NAME = ['民兵','步兵','精銳','騎士'];
-const TIER_VALUE = [1, MERGE, MERGE*MERGE, MERGE*MERGE*MERGE];
-const TIER_SCALE = [1, 1.28, 1.62, 2.05];   // 階級越高畫得越大
-// 目前編制裡最高的階。用 armyComp 而不是拿門檻直接比，
-// 否則會宣告一個因為隻數不足、畫面上根本還沒出現的兵種。
+
+   這裡踩過一次坑，留著當戒條：曾經把升級做成「真的合併」，一批低階併成
+   1 隻高階，畫面上的隻數因此縮減。實測兵力 40→420（10.5 倍）時視覺份量
+   反而從 40 掉到 23。原因是這個類型的閘門用「加人 / 減人」當獎懲語彙 ——
+   我們自己也有 -N 與 /2 的懲罰門 —— 所以「人變少」在玩家腦中早就等於踩到
+   紅門，升級長得跟受罰一模一樣。
+
+   現在的規則：畫面上的份量只准往上。
+     隻數  unitsFor()  單調成長，到 CROWD.max 飽和
+     階級  tierMix()   飽和之後改由混編比例往高階推，份量繼續長
+     合併  它是「事件」不是「狀態」—— 每翻幾倍兵力就融合出一隻放大的前排
+           精銳，人群不會因此消失（見 drawArmy 末段）
+   tools/crowd-check.js 會掃整條兵力曲線確認份量單調不遞減。 */
+const TIER_NAME  = ['民兵','步兵','精銳','騎士'];
+const TIER_TOP   = TIER_NAME.length - 1;
+// 階級越高畫得越大。級距刻意收斂 —— 填色面積是邊長的平方，最高階拉到
+// 2.05 的話面積是 4.2 倍，實測直接砍掉一半 fps。
+const TIER_SCALE = [1, 1.18, 1.38, 1.62];
+const CHAMP_SCALE = 1.75;  // 前排融合兵在自己階級之上再放大這麼多
+const CHAMP_MAX   = 6;     // 最多幾隻，再多就擋住後面的人群
+const CHAMP_BASE  = 90;    // 第一隻融合兵的門檻，刻意高過開局的 40
+const CHAMP_STEP  = 4;     // 兵力每翻這麼多倍就再融合出一隻
+
+/* 連續的階級位置：兵力每翻 TIER_STEP 倍就往上一階，以開局兵力為 0 點。
+   不能用「兵力除以門檻」那種位數拆解 —— 位數是跳的，兵力 899→900→901
+   會讓比例從五五波跳成全精銳再跳回一半民兵，人群每過一道門就換一次皮。
+   取對數才會是單調且連續的。 */
+const TIER_START = 40;   // 開局兵力 = 純民兵
+const TIER_STEP  = 18;   // 兵力每 ×18 往上一階
+function tierPos(power){
+  const f = Math.log(Math.max(1, power) / TIER_START) / Math.log(TIER_STEP);
+  return Math.max(0, Math.min(TIER_TOP, f));
+}
+// 畫面上要畫幾隻。單調遞增、到 CROWD.max 飽和 —— 只有真的損兵才會變少。
+// 次線性而不是 1:1：1:1 的話第 2 關就頂到上限，之後隻數再也不會動，
+// 成長感只剩一關。0.30 可以一路長到第 6 關才交棒給階級混編。
+const UNITS_EXP = 0.30;
+function unitsFor(power){
+  const n = TIER_START * Math.pow(Math.max(1, power) / TIER_START, UNITS_EXP);
+  return Math.max(1, Math.min(CROWD.max, Math.round(n)));
+}
+// 目前的主力兵種（佔比最大的那一階）
 function tierFor(power){
-  const c = armyComp(power);
-  for(let i=c.length-1; i>=1; i--) if(c[i]) return i;
-  return 0;
+  return Math.round(tierPos(power));
 }
-// 把兵力拆成各階的隻數 —— 就是把兵力寫成 MERGE 進位。
-// 畫面上至少要這麼多隻，否則不像一支軍隊。這個下限也順便讓開局的 40 兵力
-// 整團留在民兵 —— 出發時就掛著一隻步兵的話，晉升就沒戲唱了。
-const MIN_UNITS = 14;
-const _comp = [0,0,0,0];
-function armyComp(power){
-  let rest = Math.max(0, Math.floor(power));
-  for(let i=TIER_VALUE.length-1; i>=0; i--){
-    _comp[i] = Math.floor(rest / TIER_VALUE[i]);
-    rest -= _comp[i] * TIER_VALUE[i];
-  }
-  // 剛跨過門檻時純合併只會剩一兩隻，路上空蕩蕩。隻數不足就把最高階
-  // 「一隻一隻」拆回下一階（1 隻還原成 MERGE 隻），拆到有份量為止。
-  // 一次只拆一隻是關鍵：整階砍掉會讓 180 兵力反而比 170 少一個兵種，
-  // 過門的時候看起來就像降級了。
-  for(;;){
-    let tot = 0, top = -1;
-    for(let i=0;i<_comp.length;i++){ tot += _comp[i]; if(_comp[i]) top = i; }
-    if(top < 1 || tot >= MIN_UNITS) break;
-    _comp[top]--;
-    _comp[top-1] += MERGE;
-  }
-  return _comp;
-}
-/* 敵人吃同一套階級，但敵人的隻數是玩法決定的（每隻有血量、要被射掉），
-   不能像自軍那樣合併掉。所以改成把組成的「比例」攤到既有的隻數上：
-   一波裡就混著少數高階與多數低階，而不是整波一起換皮。
+/* 把階級位置攤成畫面上的混編比例：只混相鄰兩階，低階佔 1-hi、高階佔 hi。
+   所以人群是「逐步」換血，不是整團一起換皮。敵我共用 —— 敵人本來就不能
+   合併掉（每隻有血量、要被射掉），自軍現在也走同一條路。
    _mixCum[t] = 第 t 階以上的累積比例（由高階往低階累加，[0] 恆為 1）。 */
 const _mixCum = [0,0,0,0];
-function foeMix(power){
-  const c = armyComp(power);
-  let tot = 0;
-  for(let k=0;k<c.length;k++) tot += c[k];
+function tierMix(power){
+  const f  = tierPos(power);
+  const b  = Math.min(_mixCum.length - 2, Math.floor(f));
+  const hi = f - b;
   let acc = 0;
   for(let t=_mixCum.length-1; t>=0; t--){
-    acc += tot ? c[t]/tot : (t===0 ? 1 : 0);
+    acc += t === b+1 ? hi : (t === b ? 1-hi : 0);
     _mixCum[t] = acc;
   }
   return _mixCum;
@@ -811,6 +826,13 @@ function foeMix(power){
 function mixTier(cum, u){
   for(let t=cum.length-1; t>=1; t--) if(u < cum[t]) return t;
   return 0;
+}
+// 前排融合兵的隻數：兵力每翻 CHAMP_STEP 倍就多一隻，封頂 CHAMP_MAX。
+// 用倍數而不是「當前階的隻數」，否則跨到騎士的那一刻會從 6 隻掉回 1 隻。
+function champCount(power){
+  if(power < CHAMP_BASE) return 0;
+  return Math.min(CHAMP_MAX,
+    1 + Math.floor(Math.log(power / CHAMP_BASE) / Math.log(CHAMP_STEP)));
 }
 // FORM 的索引沒有自帶亂數，用整數雜湊補一個穩定的 0..1
 const hash01 = i => (Math.imul(i|0, 2654435761) >>> 0) / 4294967296;
@@ -969,41 +991,75 @@ function drawUnit(sx, sy, s, pal, phase, facing){
    小尺寸的精靈貼圖成本與 fillRect 相當，但看起來是人不是柵欄，
    所以整團統一用精靈，不再分色塊層。 */
 const _cbuf = [];   // 重複使用的緩衝，避免每幀配置物件
-for(let i=0;i<FORM_N;i++) _cbuf.push({z:0,x:0,y:0,s:0,f:0,p:null});
+// +CHAMP_MAX：融合兵是額外加在人群之外的，滿編時不能被擠掉
+for(let i=0;i<FORM_N+CHAMP_MAX;i++) _cbuf.push({z:0,x:0,y:0,s:0,f:0,p:null,k:0});
+const _cview = [];  // 排序用的視圖，同樣重複使用
 
-// 依「組成」繪製自軍：高階兵在核心且畫得更大，低階往外圈排。
+/* 繪製自軍。三件事同時進行，缺一份量就會掉：
+     1. 隻數隨兵力單調成長，到 CROWD.max 飽和
+     2. 飽和之後由混編比例接手，人群整體往高階推
+     3. 前排站著融合兵，數量隨兵力翻倍而增加
+   所以兵力永遠只會讓畫面更重，不會更輕。 */
 function drawArmy(cxWorld, z, power, facing, spread){
   if(!scaleAt(z)) return;
-  const comp = armyComp(power);
-  let total = 0;
-  for(let i=0;i<comp.length;i++) total += comp[i];
-  if(total <= 0) return;
-  const n = Math.min(total, FORM_N);
-  // 合併之後隻數大幅減少，若沿用原本的間距，整團會縮成一小坨。
-  // 隻數越少就把隊形攤得越開、單位畫得越大，路面上的份量才維持得住。
-  const thin = Math.min(2.6, Math.pow(CROWD.max / Math.max(6, n), 0.35));
-  const size = Math.min(1.55, Math.pow(CROWD.max / Math.max(6, n), 0.13));
-  const mul = thin * crowdRadiusMul(n) * (spread||1);
+  const n = unitsFor(power);
+  const mul = crowdRadiusMul(n) * (spread||1);
+  // 人越多每個畫得越小 → 同樣的地面塞得下更多人，飽和之後仍看得出密度
+  const shrink = 1 / (1 + CROWD.shrink * Math.log10(Math.max(1, n/130)));
+  const cum = tierMix(power);
 
-  // 由高階往低階把編隊位置分配出去（FORM 索引小 = 中心）
-  let slot = 0, m = 0;
-  for(let t=comp.length-1; t>=0; t--){
-    for(let k=0; k<comp[t] && slot<n; k++, slot++){
-      const f = FORM[slot];
-      const zz = z + f[1]*mul*0.75;
-      const ss = scaleAt(zz); if(!ss) continue;
-      const u = _cbuf[m++];
-      u.z=zz; u.x=px(cxWorld+f[0]*mul, ss); u.y=py(0, ss);
-      u.s=ss*TIER_SCALE[t]*size; u.f=f[2]; u.p=ALLY_TIERS[t];
-    }
+  let m = 0;
+  for(let i=0;i<n;i++){
+    const f = FORM[i];
+    const zz = z + f[1]*mul*0.75;
+    const ss = scaleAt(zz); if(!ss) continue;
+    const t = mixTier(cum, hash01(i+1));
+    const u = _cbuf[m++];
+    u.z=zz; u.x=px(cxWorld+f[0]*mul, ss); u.y=py(0, ss);
+    u.s=ss*shrink*TIER_SCALE[t]; u.f=f[2]; u.p=ALLY_TIERS[t]; u.k=t;
   }
-  const view = _cbuf.slice(0, m);
-  view.sort((a,b)=>b.z-a.z);
+  // 融合兵不吃 FORM 的位置，改排在人群靠鏡頭這一側的弧線上。
+  // 借用 FORM 的槽位會被前排擋住 —— 牠們是合併的獎勵，看不見就沒意義。
+  const champs = champCount(power), champT = tierFor(power);
+  for(let k=0; k<champs && m<_cbuf.length; k++){
+    const a  = champs===1 ? 0 : (k/(champs-1) - 0.5);
+    const zz = z - 0.9*mul;
+    const ss = scaleAt(zz); if(!ss) continue;
+    const u = _cbuf[m++];
+    u.z=zz; u.x=px(cxWorld + a*2.4*mul, ss); u.y=py(0, ss);
+    u.s=ss*shrink*TIER_SCALE[champT]*CHAMP_SCALE;
+    u.f=k*1.7; u.p=ALLY_TIERS[champT]; u.k=champT;
+  }
+  paintBatch(m, facing);
+}
+
+/* 把緩衝裡的單位畫出來。混編之後同一團裡有好幾種貼圖，若嚴格照 z 排序，
+   相鄰兩隻常常來自不同的來源畫布，每換一次來源就是一次貼圖切換。
+   先把 z 量化成幾條深度帶、帶內再依兵種聚在一起，切換次數就降到
+   「帶數 × 兵種數」；重疊只發生在同一帶內、位移不到一個身位，看不出來。
+   實測只值約 5% —— 人群變重之後真正的瓶頸是填色面積，那個是靠 DPR_CAP
+   解決的。這裡留著是因為便宜，不要誤以為它是主力。 */
+const DEPTH_BANDS = 14;
+function paintBatch(m, facing){
+  if(m <= 0) return;
+  let zMin = Infinity, zMax = -Infinity;
+  for(let i=0;i<m;i++){ const z=_cbuf[i].z; if(z<zMin)zMin=z; if(z>zMax)zMax=z; }
+  const span = Math.max(1e-6, zMax - zMin);
   for(let i=0;i<m;i++){
-    const u = view[i];
+    const u = _cbuf[i];
+    // 由遠而近 = band 由大到小；同帶內用兵種當次鍵
+    const band = Math.min(DEPTH_BANDS-1, ((zMax - u.z)/span*DEPTH_BANDS)|0);
+    u.o = band*8 + u.k;
+    _cview[i] = u;
+  }
+  _cview.length = m;
+  _cview.sort(_byOrder);
+  for(let i=0;i<m;i++){
+    const u = _cview[i];
     drawUnit(u.x, u.y, u.s, u.p, u.f + G.tick*7, facing);
   }
 }
+const _byOrder = (a,b)=> a.o - b.o;
 
 function drawCrowd(cxWorld, z, count, tiers, facing, spread){
   if(!scaleAt(z)) return;
@@ -1014,7 +1070,7 @@ function drawCrowd(cxWorld, z, count, tiers, facing, spread){
   // 仍然能靠密度看出差別
   const shrink = 1 / (1 + CROWD.shrink * Math.log10(Math.max(1, total/130)));
 
-  const cum = foeMix(G.army);
+  const cum = tierMix(G.army);
   let m = 0;
   for(let i=0;i<n;i++){
     const f = FORM[i];
@@ -1024,14 +1080,9 @@ function drawCrowd(cxWorld, z, count, tiers, facing, spread){
     const u = _cbuf[m++];
     u.z=zz; u.x=px(cxWorld+f[0]*mul, ss); u.y=py(0, ss);
     u.s=ss*shrink*TIER_SCALE[t]; u.f=f[2];
-    u.p = tiers[t];
+    u.p = tiers[t]; u.k = t;
   }
-  const view = _cbuf.slice(0, m);
-  view.sort((a,b)=>b.z-a.z);          // 由遠而近
-  for(let i=0;i<m;i++){
-    const u = view[i];
-    drawUnit(u.x, u.y, u.s, u.p, u.f + G.tick*7, facing);
-  }
+  paintBatch(m, facing);
 }
 
 /* ========== 天空 ========== */
@@ -1325,10 +1376,10 @@ function drawHUD(){
   ctx.strokeText(txt, CX, yy);
   ctx.fillStyle=GRAD.armyText; ctx.fillText(txt, CX, yy);
   ctx.font='800 12px system-ui'; ctx.fillStyle='rgba(255,255,255,.62)';
-  const cp = armyComp(n);
-  let lbl = '';
-  for(let i=cp.length-1;i>=0;i--) if(cp[i]) lbl += (lbl?' + ':'') + cp[i]+' '+TIER_NAME[i];
-  ctx.fillText(lbl || '兵力', CX, yy+fs*0.62);
+  // 標當前主力兵種與融合兵數。不列各階隻數 —— 畫面上的隻數是混編出來的，
+  // 寫死數字會跟眼睛看到的對不起來。
+  const ch = champCount(n);
+  ctx.fillText(TIER_NAME[tierFor(n)] + (ch ? ' · 融合兵 ×'+ch : ''), CX, yy+fs*0.62);
 
   // 巨人隨行標記
   if(G.giant && !G.siege){
@@ -1490,6 +1541,18 @@ function update(dt){
     // 直接跳出來會被閘門自己的浮字、粒子、閃光蓋掉，玩家根本看不到。
     G.promo = { name: TIER_NAME[nowTier], t: -0.35 };
     Analytics.send('tier_up', {tier:nowTier, tierName:TIER_NAME[nowTier], army:Math.round(G.army)});
+  }
+  // 融合：多出一隻前排精銳的瞬間放一次特效，這是「合併」看得到的那一下。
+  // 人群不會因此變少 —— 融合的是畫面外的兵力，不是站在路上的這些。
+  const nowCh = champCount(G.army);
+  if(nowCh > (G.champs|0)){
+    if(G.champs !== undefined && G.state === 'play'){
+      burst(G.x, G.z + 0.4, 22, '#ffe9a8');
+      addFloat('融合！','#ffe9a8', G.x, G.z + 1.2, 0.8);
+      beep(880,.10,'triangle',.05); beep(1320,.14,'triangle',.04);
+      G.flash = Math.max(G.flash, 0.35);
+    }
+    G.champs = nowCh;
   }
 
   if(G.promo){
@@ -1663,7 +1726,7 @@ function render(){
       const f=it.f, s=scaleAt(f.z); if(!s) continue;
       const ph = f.ph + G.tick*9;
       // 同一簇裡也混階：領頭的可能比隨扈高一階，看起來才有層次
-      const cum = foeMix(G.army);
+      const cum = tierMix(G.army);
       const t0 = mixTier(cum, f.qq);
       const tl = mixTier(cum, (f.qq*7.13)%1), tr = mixTier(cum, (f.qq*3.71)%1);
       const sc = s*TIER_SCALE[t0];
@@ -1910,7 +1973,14 @@ if(saved.best > 0){
 resize();
 requestAnimationFrame(loop);
 // 只在 ?debug=1 時對外暴露，避免上架後被直接改分數
-if(DEBUG){ window.__game = G; window.__analytics = Analytics; }
+if(DEBUG){
+  window.__game = G; window.__analytics = Analytics;
+  // tools/crowd-check.js 從這裡讀真的函式，才不會像 balance-sim 那樣需要人工同步
+  // 給效能實驗用：改算圖解析度上限並重建
+  window.__setDPR = d => { DPR_CAP = d; resize(); };
+  window.__crowd = { unitsFor, tierPos, tierMix, mixTier, champCount, tierFor, hash01,
+                     TIER_SCALE, TIER_NAME, CHAMP_SCALE, CROWD };
+}
 })();
 </script>
 </body>

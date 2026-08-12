@@ -22,9 +22,13 @@ node tools/balance-sim.js
 ## 專案現況
 - `index.html` — 遊戲本體，單檔，尚未重構。數值集中在 `BAL`、`SIEGE`、`CROWD`、
   `UPGRADES` 幾個常數區塊
-- 兵種是「合併制」：`MERGE` 個低階併成 1 個高階，所以兵力越大畫面上的隻數
-  反而縮減。`MERGE` / `TIER_VALUE` / `MIN_UNITS` 動到任何一個，都要重看
-  各關的編成表（見 `armyComp` 上方註解）
+- **鐵則：畫面上的份量只准往上。** 曾經把升級做成真的合併（隻數縮減），
+  結果兵力漲 10 倍畫面反而空掉 43% —— 這個類型用「加人／減人」當獎懲語彙，
+  我們自己也有 `-N` 與 `/2` 懲罰門，升級長得跟受罰一樣就毀了。
+  現在隻數 `unitsFor()` 單調成長到 `CROWD.max` 飽和，之後由 `tierMix()`
+  的階級混編接手，前排再加 `champCount()` 隻放大的融合兵。
+  動到 `CROWD.max` / `TIER_SCALE` / `UNITS_EXP` / `TIER_STEP` 任何一個，
+  都要跑 `node tools/crowd-check.js`
 - `manifest.webmanifest` — PWA 設定
 - 除錯：網址加 `?debug=1` 才會掛上 `window.__game` 與 `window.__analytics`，
   所有測試腳本都要帶這個參數
@@ -34,3 +38,7 @@ node tools/balance-sim.js
 - `tools/siege-sweep.js` — 巨人召集「組裝 vs 防守」取捨量測（需 `npm i playwright`）
 - `tools/squad-sweep.js` — 雜兵團射擊戰量測。它的輸出要回填給 balance-sim 的
   squadBase / squadLvStep / squadMissMul
+- `tools/crowd-check.js` — 人群視覺份量的單調性檢查，不過就 exit 1。
+  它直接讀 index.html 的 `window.__crowd`，不需要人工同步常數
+- 算圖解析度上限是 `DPR_CAP`（目前 1.5）。人群變重之後這是最有效的一根桿子：
+  2x 節流下 DPR 2 只有 21fps，1.5 有 34fps，畫面幾乎看不出差別
