@@ -40,11 +40,12 @@ async function main() {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
 
   console.log('巨人召集平衡量測  (index.html)');
-  console.log('兵力    關卡  走位   耗時    擊殺/配額  漏過   組裝度   巨人威力');
-  console.log('─'.repeat(72));
+  console.log('兵力    關卡  策略     耗時    漏過   組裝度   兵力損耗   巨人威力');
+  console.log('─'.repeat(74));
 
+  // 0 = 只顧組裝（不開火），1 = 只顧防守（不組裝），2 = 交替
   for (const [army0, lv] of CASES) {
-    for (const dodge of [0, 1]) {
+    for (const mode of [0, 1, 2]) {
       const page = await ctx.newPage();
       await page.goto(url, { waitUntil: 'networkidle' });
       // 讓遊戲直接從測試關卡開始，那一關才會有巨人召集
@@ -53,7 +54,7 @@ async function main() {
       await page.reload({ waitUntil: 'networkidle' });
       await page.click('#startBtn');
 
-      const r = await page.evaluate(({ army0, lv, dodge }) => new Promise(res => {
+      const r = await page.evaluate(({ army0, lv, mode }) => new Promise(res => {
         const G = window.__game;
         const sg = G.objs.find(o => o.type === 'siege');
         if (!sg) return res(null);
@@ -61,38 +62,45 @@ async function main() {
         G.level = lv; G.army = army0; G.z = sg.z - 3.1; G.x = 0; G.targetX = 0;
         for (const o of G.objs) { if (o.type === 'gate') o.used = true; if (o.type === 'squad') o.dead = true; }
 
-        // 會走位的玩家：把火力對準射程內人最多的那一排
-        // 站到哪就打到哪：移過去攔住人最多的那一排
-        const ai = setInterval(() => {
-          if (!G.siege) return;
-          if (!dodge) { G.targetX = -1.6; return; }   // 不走位＝停在原地
-          let best = -1, bx = -1.6;
-          for (const L of [1.0, 2.3, 3.6]) {
+        const goDefend = () => {
+          let best = -1, bx = 2.0;
+          for (const L of [0.9, 2.0, 3.1]) {
             const n = G.siege.foes.filter(f => Math.abs(f.x - L) < 1.3 && f.z - G.z < 25).length;
             if (n > best) { best = n; bx = L; }
           }
           G.targetX = bx;
+        };
+        const ai = setInterval(() => {
+          if (!G.siege) return;
+          const s2 = G.siege;
+          if (mode === 0) { G.targetX = -2.6; return; }              // 只顧組裝
+          if (mode === 1) { goDefend(); return; }                    // 只顧防守
+          // 交替：組裝到一半就衝去清場，清完再回來
+          const wave = s2.foes.filter(f => f.z - G.z < 22).length;
+          if (wave >= 4) goDefend(); else G.targetX = -2.6;
         }, 60);
 
         let last = null;
         const iv = setInterval(() => {
           const s = G.siege;
-          if (s) { last = { t: s.t, killed: s.killed, quota: s.quota, leaked: s.leaked }; return; }
+          if (s) { last = { t: s.t, build: s.build, leaked: s.leaked }; return; }
           if (last && last.t > 0.5) {
             clearInterval(iv); clearInterval(ai);
-            res({ ...last, giant: G.giant ? +G.giant.power.toFixed(2) : 0 });
+            res({ ...last, giant: G.giant ? +G.giant.power.toFixed(2) : 0, army: G.army });
           }
         }, 80);
         setTimeout(() => { clearInterval(iv); clearInterval(ai); res(null); }, 30000);
-      }), { army0, lv, dodge });
+      }), { army0, lv, mode });
 
       if (!r) { console.log(`${army0} lv${lv}: TIMEOUT`); await page.close(); continue; }
-      const built = Math.round(Math.min(1, r.killed / r.quota) * 100);
+      const built = Math.round(Math.min(1, r.build) * 100);
+      const loss = ((army0 - r.army) / army0 * 100).toFixed(1);
+      const name = ['只組裝', '只防守', '交替  '][mode];
       console.log(
-        `${String(army0).padStart(5)}   lv${lv}   ${dodge ? '有' : '無'}   ` +
-        `${String(r.t.toFixed(1) + 's').padStart(6)}   ${String(Math.round(r.killed) + '/' + r.quota).padStart(8)}  ` +
-        `${String(r.leaked).padStart(4)}   ${String(built + '%').padStart(6)}   ` +
-        `${r.giant ? '×' + (1 + 0.35 * r.giant).toFixed(2) + ' 王戰' : '未召出'}`);
+        `${String(army0).padStart(5)}   lv${lv}   ${name}   ` +
+        `${String(r.t.toFixed(1) + 's').padStart(6)}   ${String(r.leaked).padStart(4)}   ` +
+        `${String(built + '%').padStart(6)}   ${String(loss + '%').padStart(7)}   ` +
+        `${r.giant ? '×' + (1 + 0.35 * r.giant).toFixed(2) : '未召出'}`);
       await page.close();
     }
   }

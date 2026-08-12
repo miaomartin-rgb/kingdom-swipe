@@ -231,8 +231,12 @@ document.getElementById('mute').onclick = function(){
    這一段刻意不扣兵力 —— 它是「賺一個獎勵」的關卡，不是第二個死亡點。 */
 const SIEGE = {
   duration    : 18,     // 上限秒數
-  quotaBase   : 26,     // 組裝進度 = 擊殺數 / 配額；配額只看關卡
-  quotaLv     : 3,
+  // 組裝進度不再來自擊殺，而是來自「待在英雄旁邊的時間」。
+  // 你不能同時組裝和開火 —— 這才是這一關的取捨。
+  buildSecs   : 11.5,   // 貼著英雄站滿這麼久就組好
+  buildX      : -1.2,   // 站到這條線左邊算在組裝
+  buildBand   : 1.8,    // 過渡帶寬度，不是硬切換
+  leakCost    : 0.022,  // 每漏一個扣掉當前兵力的比例
   spawnRate   : 2.9,    // 每秒放幾個（固定值，不隨配額變）
   hpC         : 4.8,    // 單兵 hp = hpC * army^hpExp * (1+hpLv*(lv-1))
   hpExp       : 0.75,   //   次線性 → 兵越多殺得越快
@@ -245,15 +249,14 @@ const SIEGE = {
   tracerMax   : 40,
   foeSpeed    : 7.2,
   rangeZ      : 24,
-  setback     : 1.0,    // 每漏一個，組裝進度倒退幾個擊殺（鐵甲會減免）
   spawnZ      : 36,
   hordeZ      : 32,
   roadHalf    : 5.2,    // 這一段的橋面寬度（平時是 4.6）
-  crowdSpread : 0.68,   // 隊伍縮一點，走位才靈活
-  lanes       : [1.0, 2.3, 3.6],// 敵人縱隊走右側三排
+  crowdSpread : 0.55,   // 隊伍縮一團，走位才不會被推出畫面
+  lanes       : [0.9, 2.0, 3.1],// 敵人縱隊走右側三排
   startX      : -1.6,   // 開場刻意不在任何一排上，要主動去攔
   giantZ      : 8,      // 巨人組裝的位置（左前方）
-  giantX      : -2.7,
+  giantX      : -2.4,
   giantScale  : 2.2,    // 巨人身高 = 一般士兵的幾倍
   minBuild    : 0.5,    // 組裝到這個比例以上才召得出來
   bossMul     : 0.35,   // 巨人加成：王戰傷害 +bossMul*power
@@ -583,14 +586,14 @@ function startSiege(o){
   o.done = false;
   o.t = 0;
   o.killed = 0; o.spawned = 0; o.leaked = 0;
+  o.build = 0;             // 0..1 的組裝進度
   o.dmgAcc = 0; o.volleyN = 0; o.volleyAcc = 0; o.spawnAcc = 0;
   o.foes = []; o.tracers = [];
   o.army0 = Math.max(1, G.army);
   G.checkpointArmy = G.army;
-  o.quota = SIEGE.quotaBase + SIEGE.quotaLv * (G.level - 1);
+  o.quota = 999;           // 不再用擊殺配額，只是留著給舊的顯示邏輯
   o.foeHp = Math.max(6, SIEGE.hpC * Math.pow(o.army0, SIEGE.hpExp) *
                         (1 + SIEGE.hpLv * (G.level - 1)));
-  o.setback = SIEGE.setback * MUL.loss();
   G.giant = null;          // 重新召集，舊的巨人退場
   G.siege = o;
   RH = SIEGE.roadHalf;
@@ -600,9 +603,15 @@ function startSiege(o){
   beep(150,.35,'sawtooth',.07);
 }
 
+// 0 = 全力開火，1 = 全力組裝。中間是連續的過渡帶。
+function buildFocus(){
+  return Math.max(0, Math.min(1, (SIEGE.buildX - G.x) / SIEGE.buildBand + 0.5));
+}
 function siegeVolley(s, lineZ){
   s.volleyN++;
   if(!s.foes.length) return;
+  const fire = 1 - buildFocus();
+  if(fire <= 0.02) return;      // 專心組裝時完全不開火
   // 主火力只覆蓋正前方一欄；欄內沒目標就打最近的，但效率打折
   const inRange = s.foes.filter(f => f.z - lineZ < SIEGE.rangeZ);
   if(!inRange.length) return;
@@ -614,7 +623,7 @@ function siegeVolley(s, lineZ){
   if(!pool.length){ pool = inRange.slice(); mul = SIEGE.strayMul; }
   pool.sort((a,b) => a.z - b.z);
 
-  let left = Math.max(1, G.army * SIEGE.dmgPerArmy * mul), now = 0;
+  let left = Math.max(1, G.army * SIEGE.dmgPerArmy * mul * fire), now = 0;
   for(let i=0; i<pool.length && i<SIEGE.focusFoes && left>0; i++){
     const f = pool[i];
     const hit = Math.min(f.hp, left);
@@ -646,11 +655,13 @@ function updateSiege(dt){
   const s = G.siege;
   s.t += dt;
   const lineZ = G.z + 1.4;
+  // 貼著英雄就組裝，但那段時間沒人開火
+  s.build = Math.min(1, s.build + buildFocus() * dt / SIEGE.buildSecs);
 
   // 配額內的敵人在 spawnWindow 秒內平均放完
-  if(s.spawned < s.quota){
+  {
     s.spawnAcc += dt * SIEGE.spawnRate;
-    while(s.spawnAcc >= 1 && s.spawned < s.quota){
+    while(s.spawnAcc >= 1){
       s.spawnAcc -= 1; s.spawned++;
       s.foes.push({
         x: SIEGE.lanes[ri(0, SIEGE.lanes.length - 1)] + rnd(-.35,.35),
@@ -668,12 +679,12 @@ function updateSiege(dt){
     const f = s.foes[i];
     f.z -= SIEGE.foeSpeed * dt;
     if(f.z <= lineZ){
-      // 衝過去的敵人撞上組裝中的巨人，把進度撞回去。
-      // 這一段不扣兵力 —— 它是賺獎勵的關卡，不是第二個死亡點。
+      // 漏過去的敵人直接撞上你的隊伍
       s.leaked++;
-      s.killed = Math.max(0, s.killed - s.setback);
-      burst(SIEGE.giantX, G.z + SIEGE.giantZ, 9, '#ff6b8a');
-      addFloat('組裝 -1', '#ff7d92', SIEGE.giantX, G.z + SIEGE.giantZ + 1.2, 0.95);
+      const cost = Math.max(1, G.army * SIEGE.leakCost * MUL.loss());
+      G.army -= cost;
+      burst(f.x, G.z + 0.8, 9, '#ff6b8a');
+      addFloat('-'+fmtNum(Math.round(cost)), '#ff7d92', f.x, G.z + 1.4, 0.95);
       G.shake = Math.max(G.shake, 7);
       beep(90,.11,'sawtooth',.055);
       s.foes.splice(i,1);
@@ -685,15 +696,15 @@ function updateSiege(dt){
     if(t.t > t.life) s.tracers.splice(i,1);
   }
 
-  if(s.killed >= s.quota) endSiege(s);
-  else if(s.spawned >= s.quota && !s.foes.length) endSiege(s);
+  if(G.army <= 0){ G.army = 0; return lose(); }
+  if(s.build >= 1) endSiege(s);
   else if(s.t >= SIEGE.duration) endSiege(s);
 }
 
 function endSiege(s){
   s.done = true; G.siege = null;
   RH = ROAD_HALF;
-  const p = Math.min(1, s.killed / s.quota);
+  const p = Math.min(1, s.build);
   if(p >= SIEGE.minBuild){
     // 組裝到一半以上就召得出來，威力按完成度給 —— 不設全有全無的門檻
     G.giant = { power: p, ph: Math.random()*6.28 };
@@ -1278,7 +1289,7 @@ function drawHUD(){
   if(G.siege){
     const s = G.siege;
     const left = Math.max(0, SIEGE.duration - s.t);
-    const pct  = Math.floor(Math.min(1, s.killed / s.quota) * 100);
+    const pct  = Math.floor(Math.min(1, s.build) * 100);
     ctx.textAlign='center'; ctx.textBaseline='top';
     ctx.font='900 15px system-ui,sans-serif';
     ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,.75)';
@@ -1286,6 +1297,18 @@ function drawHUD(){
     ctx.strokeText(txt, CX, top+30);
     ctx.fillStyle = left<5 ? '#ff8a9a' : '#ffd98a';
     ctx.fillText(txt, CX, top+30);
+    // 你現在到底在組裝還是在開火，必須一眼看得出來
+    const bf = buildFocus();
+    const mode = bf > 0.6 ? ['組裝中 · 沒人開火','#7de3ff']
+               : bf < 0.25 ? ['全力射擊','#ffd257']
+                           : ['分神中','#ffa86a'];
+    ctx.font='900 14px system-ui,sans-serif';
+    ctx.strokeText(mode[0], CX, top+50);
+    ctx.fillStyle = mode[1]; ctx.fillText(mode[0], CX, top+50);
+    // 進度條
+    const bw2 = W*0.5, bx2 = CX-bw2/2, by2 = top+70;
+    ctx.fillStyle='rgba(0,0,0,.45)'; roundRect(bx2,by2,bw2,7,3.5); ctx.fill();
+    ctx.fillStyle='#7de3ff'; roundRect(bx2,by2,Math.max(3,bw2*Math.min(1,s.build)),7,3.5); ctx.fill();
   }
 
   // 王血條
@@ -1555,7 +1578,7 @@ function render(){
                 G.siege ? SIEGE.crowdSpread : 1);
     }
     else if(it.type==='giant'){
-      if(G.siege) drawGiant(SIEGE.giantX, it.z, 1, Math.min(1, G.siege.killed / G.siege.quota));
+      if(G.siege) drawGiant(SIEGE.giantX, it.z, 1, G.siege.build);
       else drawGiant(G.x, it.z, 1, 1);   // 加入後站隊伍正中間
     }
     else if(it.type==='horde') drawCrowd(3.0, it.z, 120, FOE_TIERS, -1, 1.5);
