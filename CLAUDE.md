@@ -22,6 +22,9 @@ node tools/balance-sim.js
 ## 專案現況
 - `index.html` — 遊戲本體，單檔，尚未重構。數值集中在 `BAL`、`SIEGE`、`CROWD`、
   `UPGRADES` 幾個常數區塊
+- 兵種是「合併制」：`MERGE` 個低階併成 1 個高階，所以兵力越大畫面上的隻數
+  反而縮減。`MERGE` / `TIER_VALUE` / `MIN_UNITS` 動到任何一個，都要重看
+  各關的編成表（見 `armyComp` 上方註解）
 - `manifest.webmanifest` — PWA 設定
 - 除錯：網址加 `?debug=1` 才會掛上 `window.__game` 與 `window.__analytics`，
   所有測試腳本都要帶這個參數

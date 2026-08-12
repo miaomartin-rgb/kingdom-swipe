@@ -49,7 +49,7 @@ async function main() {
         const page = await ctx.newPage();
         await page.goto(url, { waitUntil: 'networkidle' });
         await page.evaluate((lv) => localStorage.setItem('kingdom.v1', JSON.stringify(
-          { best: 1, maxLevel: lv, muted: true, runs: 1, gold: 0, up: {}, rankF: 0, giant: null })), lv);
+          { best: 1, maxLevel: lv, muted: true, runs: 1, gold: 0, up: {}, giant: null })), lv);
         await page.reload({ waitUntil: 'networkidle' });
         await page.click('#startBtn');
 

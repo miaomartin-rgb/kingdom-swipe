@@ -50,7 +50,7 @@ async function main() {
       await page.goto(url, { waitUntil: 'networkidle' });
       // 讓遊戲直接從測試關卡開始，那一關才會有巨人召集
       await page.evaluate((lv) => localStorage.setItem('kingdom.v1', JSON.stringify(
-        { best: 1, maxLevel: lv, muted: true, runs: 1, gold: 0, up: {}, rankF: 0, giant: null })), lv);
+        { best: 1, maxLevel: lv, muted: true, runs: 1, gold: 0, up: {}, giant: null })), lv);
       await page.reload({ waitUntil: 'networkidle' });
       await page.click('#startBtn');
 
