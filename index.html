@@ -1002,8 +1002,13 @@ const _cview = [];  // 排序用的視圖，同樣重複使用
    所以兵力永遠只會讓畫面更重，不會更輕。 */
 function drawArmy(cxWorld, z, power, facing, spread){
   if(!scaleAt(z)) return;
-  const n = unitsFor(power);
-  const mul = crowdRadiusMul(n) * (spread||1);
+  const sp = spread || 1;
+  /* 收窄隊形（城牆防守要讓出走位空間）不能直接把半徑乘上 sp —— FORM 的
+     螺旋是 r ∝ √i，本來就是等密度排布，硬乘只會把同樣的人擠進 sp² 的地面，
+     密度暴增成一坨。要縮腳印就得減隻數：n·sp² 隻的自然半徑剛好是 sp 倍，
+     密度不變。 */
+  const n = Math.max(1, Math.round(unitsFor(power) * Math.min(1, sp*sp)));
+  const mul = crowdRadiusMul(n) * Math.max(1, sp);
   // 人越多每個畫得越小 → 同樣的地面塞得下更多人，飽和之後仍看得出密度
   const shrink = 1 / (1 + CROWD.shrink * Math.log10(Math.max(1, n/130)));
   const cum = tierMix(power);
