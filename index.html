@@ -48,6 +48,10 @@
     text-shadow:0 2px 10px #000;animation:pulse 1.6s infinite;pointer-events:none;}
   @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
   .btn+.btn{margin-top:12px;}
+  /* 重置存檔：刻意做成不顯眼的文字連結，不要長得像可以隨手按的按鈕 */
+  .danger{margin-top:18px;font-size:13px;color:#8f88b5;cursor:pointer;
+    text-decoration:underline;text-underline-offset:3px;}
+  .danger.armed{color:#ff8a9a;font-weight:800;text-decoration:none;}
   .reward{margin-top:12px;font-size:15px;color:#7dffc0;font-weight:700;min-height:22px;}
   .gold{margin:10px 0 4px;font-size:20px;font-weight:900;color:#ffd257;letter-spacing:.04em;}
   #upList{margin-top:12px;display:flex;flex-direction:column;gap:8px;}
@@ -104,6 +108,7 @@
       <div class="gold" id="upGold">🪙 0</div>
       <div id="upList"></div>
       <button class="btn" id="upCloseBtn">回去出征</button>
+      <div class="danger" id="wipeBtn">重置存檔 · 從第 1 關重來</div>
     </div>
   </div>
 </div>
@@ -393,6 +398,16 @@ const MUL = {
    先寫成統一介面，之後接哪一家（GA4 / Firebase / 通路自帶）只要換 sink。
    沒有這些事件，後面所有調校都是猜測。 */
 const DEBUG = /[?&]debug=1/.test(location.search);
+/* ?reset=1 直接清掉存檔再開始 —— 測「新玩家的前 30 秒」時不用去翻瀏覽器設定。
+   清完就把參數從網址拿掉，否則重新整理會一直重來。 */
+if(/[?&]reset=1/.test(location.search)){
+  try{ localStorage.removeItem('kingdom.v1'); }catch(e){}
+  try{
+    const u = new URL(location.href);
+    u.searchParams.delete('reset');
+    history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+  }catch(e){}
+}
 const Analytics = {
   queue: [],
   send(name, props){
@@ -1954,6 +1969,27 @@ $('upCloseBtn').onclick = ()=>{
 };
 $('upBtn').onclick   = ()=> openUpgrades('result');
 $('menuUpBtn').onclick = ()=> openUpgrades('menu');
+
+/* 重置存檔。要按兩次 —— 這個動作不可逆，而且面板上其他東西都是花錢買的，
+   誤觸一次就把玩家的進度全砍掉。第一次按只是進入「確認」狀態，3 秒沒有
+   第二次就自己退回去。 */
+(()=>{
+  const el = $('wipeBtn');
+  const LABEL = '重置存檔 · 從第 1 關重來';
+  let armed = 0, timer = null;
+  const disarm = ()=>{ armed = 0; el.classList.remove('armed'); el.textContent = LABEL; };
+  el.onclick = ()=>{
+    if(!armed){
+      armed = 1; el.classList.add('armed'); el.textContent = '確定清除？再按一次';
+      clearTimeout(timer); timer = setTimeout(disarm, 3000);
+      return;
+    }
+    clearTimeout(timer);
+    Analytics.send('save_wipe', {level:G.level, best:G.best});
+    try{ localStorage.removeItem(SAVE_KEY); }catch(e){}
+    location.reload();
+  };
+})();
 
 $('nextBtn').onclick = ()=>{ if(pendingNext) pendingNext(); };
 $('retryBtn').onclick = ()=>{ G.best=Math.max(G.best,Math.floor(G.army)); startLevel(1,0); };
